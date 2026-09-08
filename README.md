@@ -70,7 +70,11 @@ page once the app is running:
   is a wildcard that scores on its own and can stand in for any of the
   three — see "Speedups: top-level entry, auto-fill, and the General
   wildcard"), Fire Crystals (building upgrades) 2,000, Fire Crystal Shards
-  (research) 1,000, Chief Charm +1 = 70, Expert Sigils (excl. Common)
+  (research) 1,000, Charm Guide +1 = 70, Charm Design +1 = 70 (both D1
+  fields — this 70pt rate was carried over from an earlier "Chief Charm"
+  field these two replaced, since no distinct rate was given for them;
+  correct it in `BAG_SECTIONS` in `data.js` if the real per-item values
+  differ), Expert Sigils (excl. Common)
   6,000, Books of Knowledge 60, Hero Shards 350/1,220/3,040
   (Rare/Epic/Mythic), Lucky Wheel 8,000/spin, Beast Slay uses Stamina Cans
   at 12,000/can (regular beasts cost 10 stamina each; this assumes
@@ -79,8 +83,10 @@ page once the app is running:
   but there's only one Stamina Cans field to enter against, so it always
   uses the top-tier rate), Polar Terror rallies 30,000 each, Pet
   Advancement +1 = 50, Troop Day scores promotion potential (see below),
-  Wild Marks 15,000/1,150 (Adv/Common), Mithril 144,000, Chief Gear +1 =
-  36, Hero Gear Essence Stones 4,000, Hero Exclusive Gear Widgets 8,000.
+  Wild Marks 15,000/1,150 (Adv/Common), Mithril 144,000, Hero Gear
+  Essence Stones 4,000, Hero Exclusive Gear Widgets 8,000. (The old
+  "Chief Gear +1" field was removed entirely — D5/Hero Power no longer
+  has a Chief Gear input.)
   Gem-based speedups are excluded from scoring entirely, same as the
   in-game rules. Gathering (Meat/Wood/Coal/Iron) doesn't have its own bag
   field currently — there's nowhere in the form to enter gathered
@@ -493,6 +499,21 @@ determined technical user. Fine for a friendly alliance tool; not something
 to rely on if that concerns you. See "Going multi-user" below for real
 auth with a real backend.
 
+**There's one permanent admin account**: name **Tacos**, PIN **2652**. It's
+seeded automatically and self-heals — `Store.init()` checks for it (by id,
+or by name if something re-added a similarly-named member) on every load
+and re-adds or repairs it if it's missing or was edited, so it survives a
+member deletion, clearing `localStorage`, or connecting to a Supabase
+project that predates it. It's also protected in the UI: in Admin →
+Members its row has no delete button, RANK is locked (not the editable
+dropdown other admins/officers get), the name field is disabled, and Reset
+PIN is replaced with a "permanent login" badge instead of a clickable
+reset. This is meant as an always-available fallback login (e.g. if every
+other admin account gets deleted or locked out) — change the id/name/PIN
+in `PERMANENT_ADMIN_MEMBER` near the top of `data.js` if you'd rather use
+different credentials, or remove the self-healing call in `Store.init()`
+if you don't want a permanent account at all.
+
 ## Going multi-user (a real shared backend) + deploying with Vercel
 
 By default every `Store.x` value (members, schedule, bag submissions,
@@ -535,6 +556,16 @@ overwrite the other (last write wins per key), not merge. Fine for
 occasional admin edits from a handful of people; if that ever becomes a
 real problem, a given key (e.g. `wos_bag_submissions`) can be split into
 its own real table later without touching anything else.
+
+**Force Sync to Supabase**: Admin → State config has a "Supabase sync"
+panel with a **Force Sync** button (admin-only, hidden for officers/R4).
+It re-pushes every synced key from this browser's current data up to
+Supabase, overwriting whatever's there — useful if this browser has data
+you know is more current (e.g. you just fixed something locally, or you
+filled in `SUPABASE_CONFIG` for the first time on a browser that already
+had real data seeded) and you don't want to wait for the normal
+read/write flow to reconcile it. The button is disabled with an
+explanatory message until `SUPABASE_CONFIG` is filled in.
 
 ### Set up Supabase
 

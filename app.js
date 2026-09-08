@@ -1922,6 +1922,19 @@ function renderAdmin(el) {
     </div>
 
     <div class="panel">
+      <div class="planner-header"><strong>Supabase sync</strong></div>
+      <p style="font-size:11.5px;color:var(--text-dim);margin-top:-6px;">
+        ${
+          supabaseClient
+            ? "Every change here already saves to Supabase automatically the instant you make it — this button re-pushes everything currently loaded (members, schedule, bag submissions, feedback, alliances, state config) right now, in case anything didn't save the first time (e.g. you were offline briefly)."
+            : "Supabase isn't configured for this site yet (SUPABASE_CONFIG is blank in data.js), so this button has nothing to sync to — data is saved to this browser's localStorage only. See README.md → \"Going multi-user\" to set it up."
+        }
+      </p>
+      <button class="btn small ${supabaseClient ? "primary" : ""}" id="admForceSync" ${supabaseClient ? "" : "disabled"}>⏫ Force Sync to Supabase</button>
+      <span id="admSyncMsg" style="margin-left:10px;font-size:12px;"></span>
+    </div>
+
+    <div class="panel">
       <div class="planner-header"><strong>Alliances (${alliances.length})</strong></div>
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
         ${
@@ -1962,7 +1975,7 @@ function renderAdmin(el) {
               .map(
                 (m) => `
               <tr>
-                <td><input data-mfield="name" data-mid="${m.id}" value="${escapeHtml(m.name)}" style="width:100%;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;" /></td>
+                <td><input data-mfield="name" data-mid="${m.id}" value="${escapeHtml(m.name)}" ${m.permanent ? `disabled title="Permanent admin login — name can't be changed"` : ""} style="width:100%;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;${m.permanent ? "opacity:.6;" : ""}" /></td>
                 <td><input data-mfield="gamerId" data-mid="${m.id}" value="${escapeHtml(m.gamerId || "")}" placeholder="—" style="width:100%;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;" /></td>
                 <td>
                   <select data-mfield="alliance" data-mid="${m.id}" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;">
@@ -1973,14 +1986,18 @@ function renderAdmin(el) {
                 </td>
                 <td>
                   ${
-                    m.pin
+                    m.permanent
+                      ? `<span style="font-size:10.5px;color:var(--text-faint);" title="Standing admin login — always PIN ${escapeHtml(PERMANENT_ADMIN_MEMBER.pin)}">permanent login</span>`
+                      : m.pin
                       ? `<button data-mresetpin="${m.id}" class="btn small" style="font-size:10.5px;color:var(--accent-amber);">Reset PIN</button>`
                       : `<span style="font-size:10.5px;color:var(--text-faint);">no PIN yet</span>`
                   }
                 </td>
                 <td>
                   ${
-                    officerScoped
+                    m.permanent
+                      ? `<span style="font-size:12px;color:var(--text-dim);" title="This is the permanent admin login — its rank can't be changed">${escapeHtml(roleLabel(m.role))}</span>`
+                      : officerScoped
                       ? `<span style="font-size:12px;color:var(--text-dim);" title="Only the admin role can change rank">${escapeHtml(roleLabel(m.role))}</span>`
                       : `<select data-mfield="role" data-mid="${m.id}" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;">
                           ${["member", "officer", "admin"].map((r) => `<option value="${r}" ${m.role === r ? "selected" : ""}>${roleLabel(r)}</option>`).join("")}
@@ -1990,7 +2007,7 @@ function renderAdmin(el) {
                 <td>
                   <div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:nowrap;">
                     ${canEditMemberBag(user) ? `<button data-medit2="${m.id}" class="btn small" style="white-space:nowrap;">Edit Bag</button>` : ""}
-                    ${officerScoped ? "" : `<button data-mdel="${m.id}" class="btn small" style="color:var(--accent-red);">✕</button>`}
+                    ${!officerScoped && !m.permanent ? `<button data-mdel="${m.id}" class="btn small" style="color:var(--accent-red);">✕</button>` : ""}
                   </div>
                 </td>
               </tr>`
@@ -2171,6 +2188,26 @@ function renderAdmin(el) {
     renderShell();
   });
 
+  el.querySelector("#admForceSync")?.addEventListener("click", async () => {
+    const btn = el.querySelector("#admForceSync");
+    const msgEl = el.querySelector("#admSyncMsg");
+    btn.disabled = true;
+    msgEl.style.color = "var(--text-dim)";
+    msgEl.textContent = "Syncing…";
+    const result = await Store.forceSyncToSupabase();
+    btn.disabled = false;
+    if (result.ok) {
+      msgEl.style.color = "var(--accent-green)";
+      msgEl.textContent = `Synced ${result.count} data sets to Supabase.`;
+    } else if (result.reason === "not_configured") {
+      msgEl.style.color = "var(--accent-red)";
+      msgEl.textContent = "Supabase isn't configured — nothing to sync to.";
+    } else {
+      msgEl.style.color = "var(--accent-red)";
+      msgEl.textContent = `Sync failed for: ${(result.failedKeys || []).join(", ")}. Check the browser console for details.`;
+    }
+  });
+
   el.querySelectorAll("[data-mfield]").forEach((input) =>
     input.addEventListener("change", () => {
       const id = input.dataset.mid;
@@ -2202,6 +2239,11 @@ function renderAdmin(el) {
   el.querySelectorAll("[data-mdel]").forEach((btn) =>
     btn.addEventListener("click", () => {
       const id = btn.dataset.mdel;
+      // Defensive re-check — this button never renders for the permanent
+      // admin account in the first place (see canEditMemberBag-style
+      // gating above), but even if it's deleted some other way,
+      // ensurePermanentAdmin() in data.js re-adds it on the very next load.
+      if (id === PERMANENT_ADMIN_MEMBER.id) return;
       const m = Store.members.filter((mm) => mm.id !== id);
       Store.members = m;
       renderAdmin(el);
