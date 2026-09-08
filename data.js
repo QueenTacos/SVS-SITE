@@ -307,13 +307,13 @@ const PLANNED_TOOLS = [
 // using localStorage exactly as it always has, with zero setup required.
 // ---------------------------------------------------------------------------
 const SUPABASE_CONFIG = {
-  url: "", // e.g. "https://oajvwbdmekxuaozsnlpa.supabase.co/rest/v1/" — Project Settings -> API
-  anonKey: "", // the "anon public" key on that same page — safe to publish, it's gated by Row Level Security, not secrecy
+  url: "https://gogoxhqfrwfmvcmwtvho.supabase.co/rest/v1/", // e.g. "https://xxxxxxxxxxxx.supabase.co" — Project Settings -> API
+  anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdvZ294aHFmcndmbXZjbXd0dmhvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg4NzM1NDgsImV4cCI6MjEwNDQ0OTU0OH0.K4kh3AWWB1g9BMnC_0YBWpqb5KkDg7mgUOGEzRJaZjA", // the "anon public" key on that same page — safe to publish, it's gated by Row Level Security, not secrecy
 };
 
 const supabaseClient =
   SUPABASE_CONFIG.url && SUPABASE_CONFIG.anonKey && typeof supabase !== "undefined"
-    ? supabase.createClient(https://oajvwbdmekxuaozsnlpa.supabase.co/rest/v1/, sb_publishable_QI19n-Wl3vk-OYrDOmS2vw_BEXLzKqG)
+    ? supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey)
     : null;
 
 // Every Store.* key below EXCEPT currentUser syncs to Supabase when
