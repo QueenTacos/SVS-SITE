@@ -1,0 +1,1597 @@
+<title>State 3929 — Combat Analytics (Live Preview)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+
+/* Jessica's palette: deep purple, hot pink, amber — plus a purple-tinted dark
+   ground instead of navy so the whole app reads as one system. Font stack
+   leads with Century Gothic (her house font) and falls back to Jost, a
+   Google-hosted geometric sans that's the closest visual match for people
+   who don't have Century Gothic installed. */
+:root{
+  --bg: #170f22;
+  --panel: #221732;
+  --panel-2: #2b1e3f;
+  --border: #3e2b57;
+  --text: #f2ecf9;
+  --text-dim: #b5a2cb;
+  --text-faint: #7a6690;
+  --accent-purple: #7c3aed;
+  --accent-pink: #ff2e92;
+  --accent-amber: #ffb020;
+  --accent-cyan: var(--accent-pink);
+  --accent-orange: var(--accent-pink);
+  --accent-teal: var(--accent-amber);
+  --accent-gold: var(--accent-amber);
+  --accent-green: #3ecf8e;
+  --accent-red: #ff5470;
+  --radius: 8px;
+}
+
+*{ box-sizing: border-box; }
+
+body{
+  margin:0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Century Gothic', CenturyGothic, 'Jost', 'Poppins', ui-sans-serif, sans-serif;
+  min-height:100vh;
+  padding-bottom: 64px;
+}
+
+a{ color:inherit; text-decoration:none; }
+button{ font-family:inherit; cursor:pointer; }
+input, select, textarea{ font-family:inherit; }
+
+.clock, .stat-card .value, .points-row .v, .summary-row .v, table td,
+.slot .time, .toggle-grid button, .day-bar-row{ font-variant-numeric: tabular-nums; }
+
+.topbar{
+  display:flex; align-items:center; justify-content:space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.topbar .brand{ display:flex; align-items:baseline; gap:8px; }
+.topbar .brand .name{ color: var(--accent-cyan); font-weight:700; letter-spacing:1px; font-size:15px; }
+.topbar .brand .ver{ color: var(--text-faint); font-size:11px; }
+.topbar .clock{ font-weight:700; font-size:14px; }
+.topbar .clock .tz{ color:var(--text-faint); font-size:10px; margin-left:4px; }
+.topbar .signin{ color: var(--accent-purple); font-size:12px; letter-spacing:1px; background:none; border:none; }
+.topbar .signin:hover{ text-decoration:underline; }
+.topbar .who{ display:flex; align-items:center; gap:10px; font-size:12px; color:var(--text-dim); }
+.topbar .who button{ background:none;border:1px solid var(--border); color:var(--text-dim); padding:4px 8px; border-radius:4px; }
+
+main{ max-width: 900px; margin: 0 auto; padding: 16px; }
+
+.section-label{
+  color: var(--text-faint); font-size:11px; letter-spacing:1px; margin: 18px 0 10px;
+  display:flex; align-items:center; gap:6px;
+}
+
+.grid2{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+@media (max-width:600px){ .grid2{ grid-template-columns: 1fr; } }
+
+.card{
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.card.clickable{ cursor:pointer; transition: background .15s; }
+.card.clickable:hover{ background: var(--panel-2); }
+
+.op-card h3{ margin:0 0 6px; font-size:16px; display:flex; justify-content:space-between; align-items:center; }
+.op-card p{ margin:0 0 10px; color:var(--text-dim); font-size:12.5px; line-height:1.4; }
+.op-card .meta{ font-size:11px; color:var(--text-faint); letter-spacing:.5px; }
+.op-card .meta b{ color: var(--text-dim); }
+
+.stat-row{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+@media (max-width:600px){ .stat-row{ grid-template-columns:1fr; } }
+.stat-card{ background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:14px 16px; }
+.stat-card .label{ font-size:11px; color:var(--text-faint); letter-spacing:1px; }
+.stat-card .value{ font-size:26px; font-weight:700; margin:4px 0; }
+.stat-card .sub{ font-size:10.5px; color:var(--text-faint); letter-spacing:1px; }
+
+.tabs{ display:flex; gap:22px; border-bottom:1px solid var(--border); margin-bottom:16px; }
+.tabs button{ background:none; border:none; color:var(--text-dim); padding:10px 2px; font-size:13px; letter-spacing:1px; border-bottom:2px solid transparent; }
+.tabs button.active{ color: var(--accent-active, var(--accent-purple)); border-color: var(--accent-active, var(--accent-purple)); }
+
+h1.page-title{ font-size:28px; margin:2px 0 16px; }
+.eyebrow{ color:var(--text-faint); font-size:11px; letter-spacing:1px; }
+
+.field-row{ display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px; }
+.field{ display:flex; flex-direction:column; gap:6px; }
+.field label{ font-size:10.5px; color:var(--text-faint); letter-spacing:1px; }
+.field select, .field input{
+  background: var(--panel-2); border:1px solid var(--border); color:var(--text);
+  padding:8px 10px; border-radius:4px; min-width:170px; font-size:13px;
+}
+
+.panel{ background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:16px; margin-bottom:14px; }
+
+.vs-row{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px; }
+.vs-row .side{ font-weight:700; font-size:22px; }
+.vs-row .side.home{ color: var(--accent-pink); }
+.vs-row .side.enemy{ color: var(--accent-cyan); }
+.vs-row .tag{ font-size:11px; color:var(--text-faint); }
+.vs-mid{ text-align:center; font-size:11px; color:var(--text-faint); }
+
+.bar-outer{ height:8px; border-radius:4px; background:var(--panel-2); overflow:hidden; display:flex; margin:6px 0 10px; }
+.bar-fill.home{ background: var(--accent-pink); }
+.bar-fill.enemy{ background: var(--accent-cyan); }
+
+.day-bar-row{ display:grid; grid-template-columns: 30px 1fr 1fr; gap:8px; align-items:center; font-size:11.5px; margin-bottom:6px; color:var(--text-dim); }
+.day-bar{ height:14px; border-radius:3px; background:var(--panel-2); position:relative; overflow:hidden; }
+.day-bar .fill{ height:100%; }
+.day-bar .fill.home{ background:var(--accent-pink); }
+.day-bar .fill.enemy{ background:var(--accent-cyan); }
+
+.note{ background: rgba(78,203,133,0.08); border:1px solid rgba(78,203,133,0.35); color:var(--accent-green); border-radius:4px; padding:10px 12px; font-size:12px; margin-top:8px; }
+
+table{ width:100%; border-collapse:collapse; font-size:12.5px; }
+th{ text-align:left; color:var(--text-faint); font-weight:400; font-size:10.5px; letter-spacing:.5px; padding:6px 8px; border-bottom:1px solid var(--border); }
+td{ padding:6px 8px; border-bottom:1px solid rgba(255,255,255,0.03); }
+tr.home-row{ color: var(--accent-pink); }
+tr.enemy-row{ color: var(--accent-cyan); }
+
+.h2h-row{ display:grid; grid-template-columns:20px 1fr 1fr; gap:10px; align-items:center; margin-bottom:8px; font-size:12px; }
+.h2h-bar{ display:flex; align-items:center; gap:6px; }
+.h2h-bar .fill{ height:20px; border-radius:3px; display:flex; align-items:center; padding:0 6px; font-size:11px; color:#10131c; font-weight:700; }
+.h2h-bar.home .fill{ background:var(--accent-pink); margin-left:auto; flex-direction:row-reverse; }
+.h2h-bar.enemy .fill{ background:var(--accent-cyan); }
+.h2h-label{ font-size:11px; color:var(--text-faint); width:40px; }
+
+.btn{ background: var(--panel-2); border:1px solid var(--border); color:var(--text); padding:8px 14px; border-radius:4px; font-size:12px; letter-spacing:.5px; }
+.btn:hover{ background: #333d56; }
+.btn.primary{ background: var(--accent-purple); border-color: var(--accent-purple); color:#fff; }
+.btn.small{ padding:4px 10px; font-size:11px; }
+
+.pill-toggle{ display:flex; gap:8px; margin-bottom:14px; }
+.pill-toggle button{ flex:1; background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim); padding:10px; border-radius:4px; font-size:12px; letter-spacing:.5px; }
+.pill-toggle button.active{ border-color: var(--accent-purple); color: var(--accent-purple); background: rgba(139,110,240,0.08); }
+
+.slot-grid{ display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+@media (max-width:600px){ .slot-grid{ grid-template-columns:1fr; } }
+.slot{ display:flex; justify-content:space-between; align-items:center; background:var(--panel-2); border:1px solid var(--border); border-radius:4px; padding:8px 10px; font-size:12px; }
+.slot.filled{ border-color: var(--accent-teal); }
+.slot .time{ color:var(--text-faint); }
+.slot .who{ color:var(--text-dim); }
+.slot.filled .who{ color: var(--accent-teal); }
+.slot.mine{ border-color: var(--accent-pink); }
+.slot.mine .who{ color: var(--accent-pink); }
+.slot button{ background:none;border:none;color:var(--text-faint); font-size:11px; }
+.slot button:hover{ color: var(--accent-red); }
+
+.slot-cell{ display:flex; flex-direction:column; gap:3px; }
+.slot-avail{ font-size:10px; color:var(--accent-amber); padding:0 10px; line-height:1.4; }
+.slot-avail.empty-avail{ color:var(--text-faint); }
+
+.day-tabs{ display:flex; gap:14px; border-bottom:1px solid var(--border); margin-bottom:14px; overflow-x:auto; }
+.day-tabs button{ background:none;border:none;color:var(--text-dim); padding:8px 2px; font-size:12px; white-space:nowrap; border-bottom:2px solid transparent; }
+.day-tabs button.active{ color: var(--accent-purple); border-color: var(--accent-purple); }
+
+.fill-status{ font-size:11px; color:var(--text-faint); margin-bottom:10px; letter-spacing:.5px; }
+
+.planner-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px; }
+.rank-list{ display:flex; flex-direction:column; gap:8px; }
+.rank-item{ display:flex; justify-content:space-between; align-items:center; background:var(--panel-2); border:1px solid var(--border); border-radius:4px; padding:10px 12px; }
+.rank-item .left{ display:flex; flex-direction:column; gap:2px; }
+.rank-item .left .name{ font-size:13px; }
+.rank-item .left .desc{ font-size:11px; color:var(--text-faint); }
+.rank-item .score{ font-size:14px; font-weight:700; color: var(--accent-active); }
+
+.feedback-item{ background:var(--panel-2); border:1px solid var(--border); border-radius:4px; padding:12px; margin-bottom:10px; display:flex; gap:12px; }
+.vote-box{ display:flex; flex-direction:column; align-items:center; gap:2px; min-width:36px; }
+.vote-box button{ background:none;border:1px solid var(--border); color:var(--text-dim); width:26px; height:22px; border-radius:3px; font-size:11px; }
+.vote-box button:hover{ border-color: var(--accent-purple); color: var(--accent-purple); }
+.vote-box .count{ font-size:13px; font-weight:700; }
+.feedback-body .title{ font-size:13px; margin-bottom:3px; }
+.feedback-body .meta{ font-size:10.5px; color:var(--text-faint); }
+.status-badge{ font-size:9.5px; padding:2px 6px; border-radius:3px; letter-spacing:.5px; margin-left:6px; }
+.status-badge.open{ background:rgba(53,201,232,0.15); color:var(--accent-cyan); }
+.status-badge.planned{ background:rgba(224,184,67,0.15); color:var(--accent-gold); }
+.status-badge.done{ background:rgba(78,203,133,0.15); color:var(--accent-green); }
+
+textarea.feedback-input{ width:100%; background:var(--panel-2); border:1px solid var(--border); color:var(--text); border-radius:4px; padding:10px; font-size:12.5px; min-height:70px; resize:vertical; }
+
+.bottom-nav{
+  position:fixed; bottom:0; left:0; right:0; background: var(--panel); border-top:1px solid var(--border);
+  display:flex; justify-content:center; gap:60px; padding:10px 0;
+}
+.bottom-nav a{ display:flex; flex-direction:column; align-items:center; gap:3px; font-size:10px; color:var(--text-faint); letter-spacing:.5px; }
+.bottom-nav a.active{ color: var(--accent-cyan); }
+
+.modal-overlay{ position:fixed; inset:0; background:rgba(10,12,20,0.7); display:flex; align-items:center; justify-content:center; z-index:50; padding:16px; }
+.modal{ background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:20px; width:100%; max-width:380px; }
+.modal h3{ margin-top:0; font-size:16px; }
+.modal .close{ float:right; background:none;border:none;color:var(--text-faint); font-size:16px; }
+.modal input{ width:100%; background:var(--panel-2); border:1px solid var(--border); color:var(--text); padding:9px 10px; border-radius:4px; margin:10px 0; font-size:13px; }
+
+.empty{ color:var(--text-faint); font-size:12.5px; text-align:center; padding:20px; }
+
+.gate{ text-align:center; padding:30px 16px; color:var(--text-dim); }
+.gate .btn{ margin-top:12px; }
+
+.editable-note{ font-size:11px; color:var(--text-faint); margin:-4px 0 14px; }
+
+.wizard-steps{ display:flex; gap:4px; margin-bottom:18px; }
+.wizard-steps .step{ flex:1; text-align:center; }
+.wizard-steps .bar{ height:3px; border-radius:2px; background:var(--panel-2); margin-bottom:6px; }
+.wizard-steps .step.done .bar, .wizard-steps .step.active .bar{ background:var(--accent-purple); }
+.wizard-steps .label{ font-size:9.5px; letter-spacing:1px; color:var(--text-faint); }
+.wizard-steps .step.active .label{ color:var(--accent-purple); }
+
+.section-title{ color:var(--accent-purple); font-size:12px; letter-spacing:1px; margin:22px 0 12px; padding-bottom:8px; border-bottom:1px solid var(--border); }
+.section-title:first-child{ margin-top:0; }
+.field-grid{ display:grid; grid-template-columns:repeat(3, 1fr); gap:16px 20px; margin-bottom:6px; }
+@media (max-width:640px){ .field-grid{ grid-template-columns:repeat(2, 1fr); } }
+@media (max-width:420px){ .field-grid{ grid-template-columns:1fr; } }
+.field-grid .field label{ display:block; font-size:10.5px; color:var(--text-faint); letter-spacing:1px; text-transform:uppercase; margin-bottom:2px; }
+.field-grid .field .rate{ display:block; color:var(--text-faint); font-size:10px; letter-spacing:0; text-transform:none; font-weight:400; margin-bottom:6px; min-height:13px; }
+.field-unit{ position:relative; }
+.field-unit input{ width:100%; padding-right:34px; }
+.field-unit .unit-suffix{ position:absolute; right:10px; top:50%; transform:translateY(-50%); font-size:10.5px; color:var(--text-faint); }
+
+.toggle-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+@media (max-width:600px){ .toggle-grid{ grid-template-columns:repeat(3,1fr); } }
+.toggle-grid button{ background:var(--panel-2); border:1px solid var(--border); color:var(--text-dim); padding:8px 4px; border-radius:4px; font-size:11px; }
+.toggle-grid button.on{ background: rgba(139,110,240,0.15); border-color: var(--accent-purple); color: var(--accent-purple); }
+
+.summary-row{ display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border); font-size:12.5px; }
+.summary-row:last-child{ border-bottom:none; }
+.summary-row .k{ color:var(--text-faint); }
+.summary-row .v{ font-weight:700; }
+
+.points-row{ display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border); font-size:12.5px; }
+.points-row:last-child{ border-bottom:none; }
+.points-row.total{ font-weight:700; color:var(--accent-purple); border-top:1px solid var(--border); margin-top:4px; padding-top:10px; }
+
+</style>
+<div id="shell"></div>
+<script>
+// ---------------------------------------------------------------------------
+// data.js — the "database" for this app.
+//
+// Everything is stored in the browser's localStorage under the "wos_" prefix,
+// seeded the first time the app loads. This makes the app fully functional
+// with zero backend setup. It is per-browser, not shared between visitors.
+//
+// To make data shared across everyone in your alliance/state (multi-user),
+// swap the Store functions below for calls to a real backend — see
+// README.md → "Going multi-user" for a Supabase schema you can start from.
+// ---------------------------------------------------------------------------
+
+const DEFAULT_STATE = {
+  stateNumber: "3929",
+  enemyState: "3897",
+  svsDate: "2026-09-12",
+  maxFurnaceLevel: "30",
+  version: "v0.1.0",
+};
+
+// Roster — replace with your real alliance & player names, or manage this
+// from the Admin page once the app is running.
+const SEED_MEMBERS = [
+  { id: "m1", name: "Chief Falcon", alliance: "STK", role: "admin" },
+  { id: "m2", name: "Nightshade", alliance: "STK", role: "officer" },
+  { id: "m3", name: "IronWolf", alliance: "SUN", role: "member" },
+];
+
+// Alliance tags — managed from Admin → Alliances (add/remove). Members pick
+// their alliance from this list.
+const SEED_ALLIANCES = ["STK", "SUN", "YUM"];
+
+// Furnace bracket options for the backpack form's "current furnace level"
+// field — managed from Admin → Furnace brackets (add/remove).
+const SEED_FURNACE_FC = ["FC1", "FC2", "FC3", "FC4", "FC5", "FC6", "FC7", "FC8", "FC9", "FC10"];
+
+// ---------------------------------------------------------------------------
+// The backpack ("bag") submission form — what a member fills in on
+// SvS prep → REQUEST, grouped into sections. `points` is the score per unit
+// of that field (per hour for hrs fields, per item otherwise); leave it
+// `null` for fields that aren't scored directly. Edit this to match your
+// state's real SvS scoring rules.
+// ---------------------------------------------------------------------------
+const BAG_SECTIONS = [
+  {
+    title: "SPEEDUPS",
+    fields: [
+      { key: "sp_construction", label: "Construction", unit: "hrs", rateNote: null, points: null },
+      { key: "sp_research", label: "Research", unit: "hrs", rateNote: null, points: null },
+      { key: "sp_troop_train", label: "Troop Train", unit: "hrs", rateNote: null, points: null },
+      { key: "sp_general", label: "General", unit: "hrs", rateNote: null, points: null },
+    ],
+  },
+  {
+    title: "D1 — CONSTRUCTION DAY",
+    fields: [
+      { key: "d1_construction", label: "Construction", unit: "hrs", rateNote: "30 pts per min", points: 1800 },
+      { key: "d1_furnace", label: "Current Furnace Level", type: "select", options: "furnaceFc", rateNote: "caps usable FC", points: null },
+      { key: "d1_fire_crystals", label: "Fire Crystals", rateNote: "2,000 pts per FC", points: 2000 },
+    ],
+  },
+  {
+    title: "D2 — RESEARCH DAY",
+    fields: [
+      { key: "d2_research", label: "Research", unit: "hrs", rateNote: "30 pts per min", points: 1800 },
+      { key: "d2_general", label: "General", unit: "hrs", rateNote: "30 pts per min", points: 1800 },
+      { key: "d2_hero_gold_shards", label: "Hero Gold Shards", rateNote: "3,040 pts per shard", points: 3040 },
+      { key: "d2_hero_purple_shards", label: "Hero Purple Shards", rateNote: "1,220 pts per shard", points: 1220 },
+      { key: "d2_expert_seals", label: "Expert Seals", rateNote: "6,000 pts per seal", points: 6000 },
+      { key: "d2_books_of_knowledge", label: "Books of Knowledge", rateNote: "60 pts per book", points: 60 },
+      { key: "d2_lucky_wheels", label: "Lucky Wheels (150 max)", rateNote: "8,000 pts per spin / 1.5k gems per spin / 13.5k gems per 10", points: 8000, max: 150 },
+    ],
+  },
+  {
+    title: "D3 — BEAST SLAY",
+    fields: [
+      { key: "d3_stamina_cans", label: "Stamina Cans (1 = 10 stamina)", rateNote: "30k pts per 25 stamina", points: 12000 },
+      { key: "d3_lucky_wheels", label: "Lucky Wheels (150 max)", rateNote: "8,000 pts per spin / 1.5k gems per spin / 13.5k gems per 10", points: 8000, max: 150 },
+    ],
+  },
+  {
+    title: "D4 — TROOP TRAINING",
+    fields: [
+      { key: "d4_troop_train", label: "Troop Train", unit: "hrs", rateNote: "85 pts per min", points: 5100 },
+      { key: "d4_charm_guides", label: "Charm Guides", rateNote: null, points: null },
+      { key: "d4_charm_designs", label: "Charm Designs", rateNote: null, points: null },
+    ],
+  },
+  {
+    title: "D5 — HERO / POWER",
+    fields: [
+      { key: "d5_adv_wild_marks", label: "Adv Wild Marks", rateNote: "15k pts per mark", points: 15000 },
+      { key: "d5_common_wild_marks", label: "Common Wild Marks", rateNote: "1,150 pts per mark", points: 1150 },
+      { key: "d5_mithril", label: "Mithril", rateNote: "144k pts per Mithril", points: 144000 },
+      { key: "d5_essence_stones", label: "Essence Stones", rateNote: "4,000 pts per stone", points: 4000 },
+      { key: "d5_widgets", label: "Widgets", rateNote: "8,000 pts per widget", points: 8000 },
+      { key: "d5_design_plans", label: "Design Plans", rateNote: null, points: null },
+      { key: "d5_polishing_solution", label: "Polishing Solution", rateNote: null, points: null },
+      { key: "d5_hardened_alloy", label: "Hardened Alloy", rateNote: null, points: null },
+    ],
+  },
+];
+
+const SEED_SCHEDULE_DAYS = ["Day 1 — Construction", "Day 2 — Research", "Day 4 — Troop"];
+
+function emptySlots() {
+  const slots = [];
+  for (let h = 0; h < 24; h++) {
+    for (let m of [0, 30]) {
+      slots.push({
+        time: `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`,
+        member: null,
+      });
+    }
+  }
+  return slots;
+}
+
+const SEED_SCHEDULE = SEED_SCHEDULE_DAYS.reduce((acc, day) => {
+  acc[day] = emptySlots();
+  return acc;
+}, {});
+
+// Whether each day's schedule has been published by an admin yet. Regular
+// members only see a day's assignments once it's true; admins always see
+// the live/draft grid regardless of this flag.
+const SEED_SCHEDULE_PUBLISHED = SEED_SCHEDULE_DAYS.reduce((acc, day) => {
+  acc[day] = false;
+  return acc;
+}, {});
+
+const SEED_FEEDBACK = [
+  {
+    id: "f1",
+    title: "Add rally timer overlay",
+    body: "Would help coordinate rally hits during SvS.",
+    author: "Chief Falcon",
+    votes: 4,
+    status: "open",
+    createdAt: Date.now() - 86400000 * 3,
+  },
+];
+
+// Tools that don't exist yet — shown on the home page as "coming soon" so
+// there's a place for them once they're built. Add more entries here as
+// you build them out.
+const PLANNED_TOOLS = [
+  {
+    id: "bears",
+    title: "bear_calculator",
+    desc: "Bear Trap hit planner — squad comp, gear thresholds, hit timing.",
+    color: "var(--accent-teal)",
+  },
+  {
+    id: "championship",
+    title: "alliance_championship",
+    desc: "Alliance Championship planner — event scoring and prep tracker.",
+    color: "var(--accent-purple)",
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Store — thin localStorage wrapper. Swap internals for API calls later.
+// ---------------------------------------------------------------------------
+const Store = {
+  _get(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw === null) return fallback;
+      return JSON.parse(raw);
+    } catch {
+      return fallback;
+    }
+  },
+  _set(key, val) {
+    localStorage.setItem(key, JSON.stringify(val));
+  },
+
+  init() {
+    if (!localStorage.getItem("wos_seeded_v2")) {
+      this._set("wos_state", DEFAULT_STATE);
+      this._set("wos_members", SEED_MEMBERS);
+      this._set("wos_schedule", SEED_SCHEDULE);
+      this._set("wos_schedule_published", SEED_SCHEDULE_PUBLISHED);
+      this._set("wos_feedback", SEED_FEEDBACK);
+      this._set("wos_alliances", SEED_ALLIANCES);
+      this._set("wos_furnace_fc", SEED_FURNACE_FC);
+      this._set("wos_bag_submissions", {});
+      this._set("wos_current_user", null);
+      localStorage.setItem("wos_seeded_v2", "1");
+    }
+  },
+
+  get state() { return this._get("wos_state", DEFAULT_STATE); },
+  set state(v) { this._set("wos_state", v); },
+
+  get members() { return this._get("wos_members", []); },
+  set members(v) { this._set("wos_members", v); },
+
+  get schedule() { return this._get("wos_schedule", SEED_SCHEDULE); },
+  set schedule(v) { this._set("wos_schedule", v); },
+
+  // { [day]: boolean } — has an admin published this day's finalized
+  // schedule for regular members to see yet?
+  get schedulePublished() { return this._get("wos_schedule_published", SEED_SCHEDULE_PUBLISHED); },
+  set schedulePublished(v) { this._set("wos_schedule_published", v); },
+
+  get feedback() { return this._get("wos_feedback", SEED_FEEDBACK); },
+  set feedback(v) { this._set("wos_feedback", v); },
+
+  get alliances() { return this._get("wos_alliances", SEED_ALLIANCES); },
+  set alliances(v) { this._set("wos_alliances", v); },
+
+  get furnaceFc() { return this._get("wos_furnace_fc", SEED_FURNACE_FC); },
+  set furnaceFc(v) { this._set("wos_furnace_fc", v); },
+
+  // { [memberId]: { values: { [fieldKey]: number|string }, timezone, availabilityType,
+  //   slots: { all: [bool*48] } | { byDay: { [day]: [bool*48] } }, notes, updatedAt } }
+  get bagSubmissions() { return this._get("wos_bag_submissions", {}); },
+  set bagSubmissions(v) { this._set("wos_bag_submissions", v); },
+
+  get currentUser() { return this._get("wos_current_user", null); },
+  set currentUser(v) { this._set("wos_current_user", v); },
+};
+
+function isAdmin(user) {
+  return !!user && (user.role === "admin" || user.role === "leader" || user.role === "officer");
+}
+
+// Returns { bySection: [{title, points}], total } for a bag submission's values.
+function computeBagPoints(values) {
+  values = values || {};
+  const bySection = BAG_SECTIONS.map((section) => {
+    const points = section.fields.reduce((sum, f) => {
+      if (f.points == null) return sum;
+      return sum + (Number(values[f.key]) || 0) * f.points;
+    }, 0);
+    return { title: section.title, points };
+  });
+  const total = bySection.reduce((sum, s) => sum + s.points, 0);
+  return { bySection, total };
+}
+
+// ---------------------------------------------------------------------------
+// app.js — router + page renderers for the State Combat Analytics clone.
+// Vanilla JS, no build step. Routes are hash-based: #/, #/svs, #/feedback,
+// #/admin, plus stub pages for planned tools (#/bears, #/championship).
+// ---------------------------------------------------------------------------
+
+Store.init();
+
+const ROUTES = {
+  "/": renderHome,
+  "/svs": renderSvS,
+  "/feedback": renderFeedback,
+  "/admin": renderAdmin,
+};
+// wire up stub routes for planned tools
+PLANNED_TOOLS.forEach((t) => {
+  ROUTES["/" + t.id] = (el) => renderComingSoon(el, t);
+});
+
+function currentPath() {
+  const h = location.hash.replace(/^#/, "");
+  return h || "/";
+}
+
+function navigate(path) {
+  location.hash = path;
+}
+
+function fmtNum(n) {
+  n = Number(n) || 0;
+  if (Math.abs(n) >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(1) + "M";
+  if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(1) + "K";
+  return String(n);
+}
+
+// ---------------------------------------------------------------------------
+// Shell: topbar (with admin link) + bottom nav + router outlet
+// ---------------------------------------------------------------------------
+function renderShell() {
+  const st = Store.state;
+  const user = Store.currentUser;
+  document.getElementById("shell").innerHTML = `
+    <div class="topbar">
+      <a href="#/" class="brand">
+        <span class="name">STATE-${st.stateNumber}</span>
+        <span class="ver">${st.version}</span>
+      </a>
+      ${isAdmin(user) ? `<a href="#/admin" class="signin" style="color:var(--accent-gold);">⚙ admin</a>` : `<span></span>`}
+      <div class="clock" id="clock">--:-- <span class="tz">UTC</span></div>
+      ${
+        user
+          ? `<div class="who">◇ ${user.name}<button id="signOutBtn">sign out</button></div>`
+          : `<button class="signin" id="signInBtn">◇ sign in</button>`
+      }
+    </div>
+    <main id="app"></main>
+    <nav class="bottom-nav">
+      <a href="#/" data-path="/">◆<br/>home</a>
+      <a href="#/svs" data-path="/svs">▶<br/>svs</a>
+      ${isAdmin(user) ? `<a href="#/admin" data-path="/admin">⚙<br/>admin</a>` : ""}
+    </nav>
+  `;
+  document.getElementById("signInBtn")?.addEventListener("click", openSignIn);
+  document.getElementById("signOutBtn")?.addEventListener("click", () => {
+    Store.currentUser = null;
+    renderShell();
+    router();
+  });
+  tickClock();
+}
+
+function tickClock() {
+  const el = document.getElementById("clock");
+  if (!el) return;
+  const now = new Date();
+  const hh = String(now.getUTCHours()).padStart(2, "0");
+  const mm = String(now.getUTCMinutes()).padStart(2, "0");
+  el.innerHTML = `${hh}:${mm} <span class="tz">UTC</span>`;
+}
+setInterval(tickClock, 15000);
+
+function router() {
+  const path = currentPath();
+  const container = document.getElementById("app");
+  if (!container) return;
+  document
+    .querySelectorAll(".bottom-nav a")
+    .forEach((a) => a.classList.toggle("active", a.dataset.path === path));
+  const renderer = ROUTES[path] || renderHome;
+  container.innerHTML = "";
+  renderer(container);
+}
+
+window.addEventListener("hashchange", () => { renderShell(); router(); });
+window.addEventListener("DOMContentLoaded", () => {
+  renderShell();
+  router();
+});
+
+// ---------------------------------------------------------------------------
+// Sign-in modal (local identity only — see README for real auth)
+// ---------------------------------------------------------------------------
+function openSignIn() {
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `
+    <div class="modal">
+      <button class="close">&times;</button>
+      <h3>Sign in</h3>
+      <p style="color:var(--text-dim);font-size:12px;margin-top:-6px;">Find your chief name to continue.</p>
+      <input id="siName" placeholder="Type your chief name..." list="memberList" />
+      <datalist id="memberList">
+        ${Store.members.map((m) => `<option value="${m.name}">`).join("")}
+      </datalist>
+      <button class="btn primary" id="siGo" style="width:100%;">Continue</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector(".close").onclick = () => overlay.remove();
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.querySelector("#siGo").onclick = () => {
+    const name = overlay.querySelector("#siName").value.trim();
+    if (!name) return;
+    let member = Store.members.find((m) => m.name.toLowerCase() === name.toLowerCase());
+    if (!member) {
+      member = { id: "m" + Date.now(), name, alliance: "—", role: "member" };
+      Store.members = [...Store.members, member];
+    }
+    Store.currentUser = member;
+    overlay.remove();
+    renderShell();
+    router();
+  };
+}
+
+// ---------------------------------------------------------------------------
+// HOME
+// ---------------------------------------------------------------------------
+function renderHome(el) {
+  const st = Store.state;
+  const publishedSection = renderPublishedScheduleByAlliance();
+
+  el.innerHTML = `
+    <div class="section-label">▸ STATE ${st.stateNumber} OPERATIONS</div>
+    <div class="section-label">▸ OPERATIONS</div>
+    <div class="grid2">
+      ${opCard({
+        href: "#/svs", color: "var(--accent-purple)", title: "svs_prep",
+        desc: "Backpack, optimiser, schedule.",
+        meta: `SVS ${st.svsDate} · MAX FURNACE FC${st.maxFurnaceLevel || "—"}`,
+      })}
+      ${opCard({
+        href: "#/feedback", color: "var(--accent-orange)", title: "feedback",
+        desc: "Post, vote, and track ideas & bugs.",
+        meta: "TELL US WHAT'S MISSING", plus: true,
+      })}
+      ${PLANNED_TOOLS.map((t) =>
+        opCard({
+          href: "#/" + t.id, color: t.color, title: t.title,
+          desc: t.desc, meta: "COMING SOON", dim: true,
+        })
+      ).join("")}
+    </div>
+
+    ${publishedSection}
+
+    <div class="section-label">▸ DATABASE</div>
+    <div class="stat-row">
+      <div class="stat-card">
+        <div class="label">MEMBERS</div>
+        <div class="value">${Store.members.length}</div>
+        <div class="sub">REGISTERED</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">SUBMISSIONS</div>
+        <div class="value">${Store.feedback.length}</div>
+        <div class="sub">FEEDBACK ITEMS</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">SLOTS FILLED</div>
+        <div class="value">${countFilledSlots()}</div>
+        <div class="sub">SVS PREP</div>
+      </div>
+    </div>
+  `;
+}
+
+// Home page "▸ SVS SCHEDULE" section — only the days an admin has published,
+// grouped by alliance so each alliance can see its own finalized assignments
+// at a glance. Returns "" (renders nothing) until at least one day is live.
+function renderPublishedScheduleByAlliance() {
+  const published = Store.schedulePublished;
+  const publishedDays = SEED_SCHEDULE_DAYS.filter((d) => published[d]);
+  if (!publishedDays.length) return "";
+
+  const sched = Store.schedule;
+  const alliances = Store.alliances;
+  const membersById = Object.fromEntries(Store.members.map((m) => [m.id, m]));
+
+  const allianceBlocks = alliances
+    .map((tag) => {
+      const rows = [];
+      publishedDays.forEach((day) => {
+        (sched[day] || []).forEach((s) => {
+          if (!s.member) return;
+          const m = membersById[s.member.id];
+          if (!m || m.alliance !== tag) return;
+          rows.push({ day, time: s.time, name: s.member.name });
+        });
+      });
+      if (!rows.length) return "";
+      return `
+        <div class="panel" style="background:var(--panel-2);">
+          <div class="planner-header"><strong>${escapeHtml(tag)}</strong><span class="eyebrow">${rows.length} SLOT${rows.length === 1 ? "" : "S"}</span></div>
+          <div style="display:flex;flex-direction:column;gap:4px;">
+            ${rows
+              .map(
+                (r) => `
+              <div style="display:flex;justify-content:space-between;font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);">
+                <span style="color:var(--text-dim);">${escapeHtml(r.day)} · ${r.time}</span>
+                <span>${escapeHtml(r.name)}</span>
+              </div>`
+              )
+              .join("")}
+          </div>
+        </div>`;
+    })
+    .filter(Boolean)
+    .join("");
+
+  return `
+    <div class="section-label">▸ SVS SCHEDULE — PUBLISHED</div>
+    <div class="grid2">
+      ${allianceBlocks || `<div class="panel" style="color:var(--text-dim);font-size:12px;">Published, but no slots are assigned yet.</div>`}
+    </div>
+  `;
+}
+
+function countFilledSlots() {
+  const sched = Store.schedule;
+  return Object.values(sched).reduce((sum, day) => sum + day.filter((s) => s.member).length, 0);
+}
+
+// Members who marked themselves available for this day/slot-index on their
+// SvS prep → REQUEST → TIME SLOTS submission (separate from the single
+// "assigned" chief on the schedule grid — this is everyone who said they
+// could be online).
+function availableMembersForSlot(day, i) {
+  const subs = Store.bagSubmissions;
+  const members = Store.members;
+  return Object.entries(subs)
+    .filter(([memberId, sub]) => {
+      // Count a slot as available if it was ever marked under EITHER
+      // availability mode, not just whichever mode the submission ended up
+      // on. A member can tap a slot under "ALL DAYS", then click over to
+      // "BY DAY" just to look before submitting — that switches
+      // availabilityType but the earlier tap is still sitting in
+      // slots.all and should still count.
+      const onAll = !!sub.slots?.all?.[i];
+      const onDay = !!sub.slots?.byDay?.[day]?.[i];
+      return onAll || onDay;
+    })
+    .map(([memberId]) => members.find((m) => m.id === memberId))
+    .filter(Boolean);
+}
+
+function opCard({ href, color, title, desc, meta, plus, dim }) {
+  return `
+    <a href="${href}" class="card op-card clickable" style="--accent:${color};${dim ? "opacity:.6;" : ""}">
+      <h3>${title} <span style="color:${color}">${plus ? "+" : "▶"}</span></h3>
+      <p>${desc}</p>
+      <div class="meta">${meta}</div>
+    </a>
+  `;
+}
+
+function renderComingSoon(el, tool) {
+  el.innerHTML = `
+    <div class="eyebrow">// PLANNED TOOL</div>
+    <h1 class="page-title" style="color:${tool.color}">${tool.title}</h1>
+    <div class="panel gate">
+      <p>${tool.desc}</p>
+      <p style="font-size:12px;">Not built yet — this is a placeholder route so the card has somewhere to link to. Build it out in <code>app.js</code> (add a renderer) and <code>data.js</code> (add its data) when you're ready.</p>
+    </div>
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// SVS PREP
+// ---------------------------------------------------------------------------
+let svsTab = "request";
+let svsDay = SEED_SCHEDULE_DAYS[0];
+let svsWizardStep = "backpack";
+let svsWizardDayTab = SEED_SCHEDULE_DAYS[0];
+let svsDraft = null;
+
+// Every slot on this page is UTC only — no per-member local-time picker.
+// That's deliberate: mixed timezones on a shared schedule is how slots get
+// double-booked or missed, so everyone reads and books off the same clock.
+const FIXED_TIMEZONE = "UTC";
+
+function renderSvS(el) {
+  el.innerHTML = `
+    <div class="tabs" style="--accent-active:var(--accent-purple)">
+      <button data-t="request" class="${svsTab === "request" ? "active" : ""}">REQUEST</button>
+      <button data-t="mysub" class="${svsTab === "mysub" ? "active" : ""}">MY SUBMISSION</button>
+      <button data-t="mypoints" class="${svsTab === "mypoints" ? "active" : ""}">MY POINTS</button>
+      <button data-t="schedule" class="${svsTab === "schedule" ? "active" : ""}">SCHEDULE</button>
+    </div>
+    <div id="svsBody"></div>
+  `;
+  el.querySelectorAll(".tabs button").forEach((b) =>
+    b.addEventListener("click", () => { svsTab = b.dataset.t; if (svsTab === "request") svsWizardStep = svsWizardStep || "backpack"; renderSvS(el); })
+  );
+  const body = el.querySelector("#svsBody");
+  if (svsTab === "request") renderSvSWizard(body);
+  else if (svsTab === "mysub") renderSvSMySubmission(body);
+  else if (svsTab === "mypoints") renderSvSMyPoints(body);
+  else renderSvSSchedule(body);
+}
+
+function blankDraft() {
+  return {
+    values: {},
+    timezone: FIXED_TIMEZONE,
+    availabilityType: "all",
+    slots: { all: Array(48).fill(false), byDay: SEED_SCHEDULE_DAYS.reduce((a, d) => ((a[d] = Array(48).fill(false)), a), {}) },
+    notes: "",
+    updatedAt: null,
+  };
+}
+
+function loadDraft(user) {
+  const existing = Store.bagSubmissions[user.id];
+  if (existing) {
+    // fill in any structure gaps (e.g. new schedule days) without losing saved data
+    const d = blankDraft();
+    return {
+      ...d,
+      ...existing,
+      slots: {
+        all: existing.slots?.all || d.slots.all,
+        byDay: { ...d.slots.byDay, ...(existing.slots?.byDay || {}) },
+      },
+    };
+  }
+  return blankDraft();
+}
+
+function svsGate(el, msg) {
+  el.innerHTML = `
+    <div class="panel">
+      <div class="eyebrow" style="color:var(--accent-purple);margin-bottom:10px;">SIGN IN TO SUBMIT</div>
+      <button class="btn primary" id="goSignIn">${msg}</button>
+    </div>
+  `;
+  el.querySelector("#goSignIn").onclick = openSignIn;
+}
+
+function renderSvSWizard(el) {
+  const user = Store.currentUser;
+  if (!user) return svsGate(el, "Sign in to request a slot");
+  if (!svsDraft) svsDraft = loadDraft(user);
+
+  const steps = [
+    { id: "backpack", label: "BACKPACK" },
+    { id: "review", label: "REVIEW" },
+    { id: "timeslots", label: "TIME SLOTS" },
+    { id: "submit", label: "SUBMIT" },
+  ];
+  const stepIdx = steps.findIndex((s) => s.id === svsWizardStep);
+
+  el.innerHTML = `
+    <div class="panel">
+      <div class="eyebrow" style="margin-bottom:2px;">svs_request</div>
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:14px;">SvS · ${Store.state.svsDate}</div>
+      <div class="wizard-steps">
+        ${steps
+          .map(
+            (s, i) => `
+          <div class="step ${i === stepIdx ? "active" : ""} ${i < stepIdx ? "done" : ""}">
+            <div class="bar"></div><div class="label">${s.label}</div>
+          </div>`
+          )
+          .join("")}
+      </div>
+      <div id="wizardBody"></div>
+    </div>
+  `;
+  const body = el.querySelector("#wizardBody");
+  if (svsWizardStep === "backpack") renderWizardBackpack(body, el);
+  else if (svsWizardStep === "review") renderWizardReview(body, el);
+  else if (svsWizardStep === "timeslots") renderWizardTimeSlots(body, el);
+  else renderWizardSubmit(body, el);
+}
+
+function renderWizardBackpack(el, wrap) {
+  el.innerHTML = `
+    ${BAG_SECTIONS.map(
+      (section) => `
+      <div class="section-title">${section.title}</div>
+      <div class="field-grid">
+        ${section.fields
+          .map((f) => {
+            if (f.type === "select") {
+              const opts = f.options === "furnaceFc" ? Store.furnaceFc : [];
+              return `
+              <div class="field">
+                <label>${f.label}<span class="rate">${f.rateNote || ""}</span></label>
+                <select data-field="${f.key}">
+                  ${opts.map((o) => `<option ${svsDraft.values[f.key] === o ? "selected" : ""}>${o}</option>`).join("")}
+                </select>
+              </div>`;
+            }
+            return `
+            <div class="field">
+              <label>${f.label}<span class="rate">${f.rateNote || ""}</span></label>
+              <div class="field-unit">
+                <input type="number" min="0" ${f.max ? `max="${f.max}"` : ""} data-field="${f.key}" value="${svsDraft.values[f.key] ?? ""}" placeholder="0" />
+                ${f.unit ? `<span class="unit-suffix">${f.unit}</span>` : ""}
+              </div>
+            </div>`;
+          })
+          .join("")}
+      </div>`
+    ).join("")}
+    <button class="btn primary" id="wizNext" style="margin-top:6px;">NEXT → REVIEW POINTS</button>
+  `;
+  el.querySelectorAll("[data-field]").forEach((input) =>
+    input.addEventListener("change", () => {
+      svsDraft.values[input.dataset.field] = input.tagName === "SELECT" ? input.value : Number(input.value) || 0;
+    })
+  );
+  el.querySelector("#wizNext").onclick = () => { svsWizardStep = "review"; refreshSvS(); };
+}
+
+function refreshSvS() {
+  const app = document.getElementById("app");
+  if (app) renderSvS(app);
+}
+
+function renderWizardReview(el, wrap) {
+  const { bySection, total } = computeBagPoints(svsDraft.values);
+  el.innerHTML = `
+    <div class="section-title">POINTS BY SECTION</div>
+    <div style="margin-bottom:16px;">
+      ${bySection
+        .map((s) => `<div class="points-row"><span class="k">${s.title}</span><span class="v">${fmtNum(s.points)}</span></div>`)
+        .join("")}
+      <div class="points-row total"><span class="k">TOTAL PROJECTED</span><span class="v">${fmtNum(total)}</span></div>
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button class="btn" id="wizBack">← BACK</button>
+      <button class="btn primary" id="wizNext">NEXT → TIME SLOTS</button>
+    </div>
+  `;
+  el.querySelector("#wizBack").onclick = () => { svsWizardStep = "backpack"; refreshSvS(); };
+  el.querySelector("#wizNext").onclick = () => { svsWizardStep = "timeslots"; refreshSvS(); };
+}
+
+function renderWizardTimeSlots(el) {
+  const mode = svsDraft.availabilityType;
+  const activeSlots = mode === "all" ? svsDraft.slots.all : svsDraft.slots.byDay[svsWizardDayTab];
+  el.innerHTML = `
+    <p style="font-size:11.5px;color:var(--text-dim);margin:0 0 16px;">All times on this page are <strong style="color:var(--text);">UTC</strong> — everyone books and reads the schedule off the same clock, no local-time conversion.</p>
+    <div class="section-title">AVAILABILITY TYPE</div>
+    <div class="pill-toggle">
+      <button data-mode="all" class="${mode === "all" ? "active" : ""}">ALL DAYS<br><span style="font-size:10px;color:var(--text-faint);">Same slots across ${SEED_SCHEDULE_DAYS.length} days</span></button>
+      <button data-mode="byday" class="${mode === "byday" ? "active" : ""}">BY DAY<br><span style="font-size:10px;color:var(--text-faint);">Pick slots separately per day</span></button>
+    </div>
+    ${
+      mode === "byday"
+        ? `<div class="day-tabs">${SEED_SCHEDULE_DAYS.map((d) => `<button data-d="${d}" class="${d === svsWizardDayTab ? "active" : ""}">${d.toUpperCase()}</button>`).join("")}</div>`
+        : ""
+    }
+    <div class="section-title" style="margin-top:14px;">TAP EVERY SLOT YOU COULD BE ONLINE</div>
+    <p style="font-size:11.5px;color:var(--text-dim);margin:-2px 0 14px;">More slots = better chance of getting assigned. We prioritise high scorers across the widest availability window.</p>
+    <div class="toggle-grid">
+      ${activeSlots
+        .map((on, i) => `<button data-slot="${i}" class="${on ? "on" : ""}">${slotTimeLabel(i)}</button>`)
+        .join("")}
+    </div>
+    <div style="display:flex;gap:10px;margin-top:16px;">
+      <button class="btn" id="wizBack">← BACK</button>
+      <button class="btn primary" id="wizNext">NEXT → SUBMIT</button>
+    </div>
+  `;
+  el.querySelectorAll("[data-mode]").forEach((b) =>
+    b.addEventListener("click", () => { svsDraft.availabilityType = b.dataset.mode; renderWizardTimeSlots(el); })
+  );
+  el.querySelectorAll(".day-tabs button").forEach((b) =>
+    b.addEventListener("click", () => { svsWizardDayTab = b.dataset.d; renderWizardTimeSlots(el); })
+  );
+  el.querySelectorAll("[data-slot]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const i = Number(btn.dataset.slot);
+      const arr = mode === "all" ? svsDraft.slots.all : svsDraft.slots.byDay[svsWizardDayTab];
+      arr[i] = !arr[i];
+      btn.classList.toggle("on", arr[i]);
+    })
+  );
+  el.querySelector("#wizBack").onclick = () => { svsWizardStep = "review"; refreshSvS(); };
+  el.querySelector("#wizNext").onclick = () => { svsWizardStep = "submit"; refreshSvS(); };
+}
+
+function slotTimeLabel(i) {
+  const h = Math.floor(i / 2);
+  const m = i % 2 === 0 ? "00" : "30";
+  return `${String(h).padStart(2, "0")}:${m}`;
+}
+
+function countSelectedSlots() {
+  if (svsDraft.availabilityType === "all") return { n: svsDraft.slots.all.filter(Boolean).length, denom: 48 };
+  let n = 0;
+  SEED_SCHEDULE_DAYS.forEach((d) => (n += (svsDraft.slots.byDay[d] || []).filter(Boolean).length));
+  return { n, denom: 48 * SEED_SCHEDULE_DAYS.length };
+}
+
+function bestBuffDay() {
+  const { bySection } = computeBagPoints(svsDraft.values);
+  const dayScored = bySection.filter((s) => /^D\d/.test(s.title));
+  if (!dayScored.length || dayScored.every((s) => s.points === 0)) return "—";
+  const top = dayScored.reduce((a, b) => (b.points > a.points ? b : a));
+  return `${top.title.split("—")[1]?.trim() || top.title} · ${fmtNum(top.points)}`;
+}
+
+function renderWizardSubmit(el, wrap) {
+  const user = Store.currentUser;
+  const { n, denom } = countSelectedSlots();
+  el.innerHTML = `
+    <div class="panel" style="background:var(--panel-2);">
+      <div class="eyebrow" style="margin-bottom:8px;">CONFIRM & SUBMIT</div>
+      <div class="summary-row"><span class="k">Chief</span><span class="v">${escapeHtml(user.name)}</span></div>
+      <div class="summary-row"><span class="k">Availability</span><span class="v">${n} / ${denom} slots (${svsDraft.availabilityType === "all" ? "all days" : "by day"})</span></div>
+      <div class="summary-row"><span class="k">Best buff day</span><span class="v">${bestBuffDay()}</span></div>
+    </div>
+    <div class="section-title" style="margin-top:16px;">NOTES (OPTIONAL)</div>
+    <textarea class="feedback-input" id="wizNotes" placeholder="Anything the scheduler should know...">${escapeHtml(svsDraft.notes || "")}</textarea>
+    <div style="display:flex;gap:10px;margin-top:16px;">
+      <button class="btn" id="wizBack">← BACK</button>
+      <button class="btn primary" id="wizSubmit" style="flex:1;">SUBMIT REQUEST</button>
+    </div>
+    <div id="wizMsg" style="margin-top:10px;font-size:12px;color:var(--accent-green);"></div>
+  `;
+  el.querySelector("#wizBack").onclick = () => { svsWizardStep = "timeslots"; refreshSvS(); };
+  el.querySelector("#wizSubmit").onclick = () => {
+    svsDraft.notes = el.querySelector("#wizNotes").value;
+    svsDraft.updatedAt = Date.now();
+    const all = Store.bagSubmissions;
+    all[user.id] = svsDraft;
+    Store.bagSubmissions = all;
+    svsDraft = null;
+    svsWizardStep = "backpack";
+    svsTab = "mysub";
+    refreshSvS();
+  };
+}
+
+function renderSvSMySubmission(el) {
+  const user = Store.currentUser;
+  if (!user) return svsGate(el, "Sign in to view your submission");
+  const sub = Store.bagSubmissions[user.id];
+  if (!sub) {
+    el.innerHTML = `
+      <div class="panel gate">
+        <p>You haven't submitted a backpack request for this SvS yet.</p>
+        <button class="btn primary" id="goReq">Start your request</button>
+      </div>
+    `;
+    el.querySelector("#goReq").onclick = () => { svsTab = "request"; svsWizardStep = "backpack"; svsDraft = null; refreshSvS(); };
+    return;
+  }
+  const { n, denom } = (() => {
+    if (sub.availabilityType === "all") return { n: (sub.slots.all || []).filter(Boolean).length, denom: 48 };
+    let n = 0;
+    SEED_SCHEDULE_DAYS.forEach((d) => (n += (sub.slots.byDay?.[d] || []).filter(Boolean).length));
+    return { n, denom: 48 * SEED_SCHEDULE_DAYS.length };
+  })();
+  const { total } = computeBagPoints(sub.values);
+  el.innerHTML = `
+    <div class="panel">
+      <div class="eyebrow" style="margin-bottom:8px;">Your submission</div>
+      <div class="summary-row"><span class="k">Chief</span><span class="v">${escapeHtml(user.name)}</span></div>
+      <div class="summary-row"><span class="k">Timezone</span><span class="v">${escapeHtml(sub.timezone)}</span></div>
+      <div class="summary-row"><span class="k">Availability</span><span class="v">${n} / ${denom} slots (${sub.availabilityType === "all" ? "all days" : "by day"})</span></div>
+      <div class="summary-row"><span class="k">Projected points</span><span class="v">${fmtNum(total)}</span></div>
+      <div class="summary-row"><span class="k">Last updated</span><span class="v">${new Date(sub.updatedAt).toLocaleString()}</span></div>
+      ${sub.notes ? `<div class="summary-row"><span class="k">Notes</span><span class="v">${escapeHtml(sub.notes)}</span></div>` : ""}
+      <button class="btn primary small" id="editSub" style="margin-top:14px;">Edit submission</button>
+    </div>
+  `;
+  el.querySelector("#editSub").onclick = () => { svsTab = "request"; svsWizardStep = "backpack"; svsDraft = null; refreshSvS(); };
+}
+
+function renderSvSMyPoints(el) {
+  const user = Store.currentUser;
+  if (!user) return svsGate(el, "Sign in to view your points");
+  const sub = Store.bagSubmissions[user.id];
+  if (!sub) {
+    el.innerHTML = `<div class="empty">No submission yet — projected points will show up here once you submit a backpack request.</div>`;
+    return;
+  }
+  const { bySection, total } = computeBagPoints(sub.values);
+  el.innerHTML = `
+    <div class="panel">
+      <div class="eyebrow" style="margin-bottom:8px;">Projected SvS points</div>
+      ${bySection.map((s) => `<div class="points-row"><span class="k">${s.title}</span><span class="v">${fmtNum(s.points)}</span></div>`).join("")}
+      <div class="points-row total"><span class="k">TOTAL</span><span class="v">${fmtNum(total)}</span></div>
+    </div>
+  `;
+}
+
+function renderSvSSchedule(el) {
+  const admin = isAdmin(Store.currentUser);
+  const sched = Store.schedule;
+  const published = Store.schedulePublished;
+  const slots = sched[svsDay] || [];
+  const filled = slots.filter((s) => s.member).length;
+  const isPublished = !!published[svsDay];
+
+  const dayTabsHtml = `
+    <div class="day-tabs">
+      ${SEED_SCHEDULE_DAYS
+        .map(
+          (d) =>
+            `<button data-d="${d}" class="${d === svsDay ? "active" : ""}">${d.toUpperCase()}${
+              admin ? (published[d] ? " ●" : "") : ""
+            }</button>`
+        )
+        .join("")}
+    </div>`;
+
+  // Regular members: locked until an admin publishes this day, then a
+  // simple read-only view — no availability data, no editing controls.
+  if (!admin) {
+    el.innerHTML = `
+      <div class="panel">
+        <div class="planner-header">
+          <div>
+            <strong>svs_schedule</strong>
+            <span class="eyebrow"> · SvS ${Store.state.svsDate}</span>
+          </div>
+        </div>
+        ${dayTabsHtml}
+        ${
+          !isPublished
+            ? `<div class="panel" style="background:var(--panel-2);text-align:center;padding:26px 16px;">
+                <div style="font-size:13px;color:var(--text-dim);">This day's schedule hasn't been published yet.</div>
+                <div style="font-size:11.5px;color:var(--text-faint);margin-top:4px;">Check back once your alliance leadership finalizes it.</div>
+              </div>`
+            : `
+              <div class="fill-status">${filled} / ${slots.length} SLOTS FILLED · FINALIZED</div>
+              <div class="slot-grid">
+                ${slots
+                  .map((s, i) => {
+                    const mine = s.member && Store.currentUser && s.member.id === Store.currentUser.id;
+                    return `
+                    <div class="slot-cell">
+                      <div class="slot ${s.member ? "filled" : ""} ${mine ? "mine" : ""}">
+                        <span class="time">${s.time}</span>
+                        <span class="who">${s.member ? escapeHtml(s.member.name) : "— empty —"}</span>
+                      </div>
+                    </div>`;
+                  })
+                  .join("")}
+              </div>`
+        }
+      </div>
+    `;
+    el.querySelectorAll(".day-tabs button").forEach((b) =>
+      b.addEventListener("click", () => { svsDay = b.dataset.d; renderSvSSchedule(el); })
+    );
+    return;
+  }
+
+  // Admin: unchanged live/draft grid with full editing + availability,
+  // plus a publish/unpublish toggle for the currently-viewed day.
+  el.innerHTML = `
+    <div class="panel">
+      <div class="planner-header">
+        <div>
+          <strong>svs_schedule</strong>
+          <span class="eyebrow"> · SvS ${Store.state.svsDate}</span>
+        </div>
+        <button class="btn small" id="exportDay">EXPORT DAY</button>
+      </div>
+      ${dayTabsHtml}
+      <div class="fill-status" style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+        <span>${filled} / ${slots.length} SLOTS FILLED · PROVISIONAL</span>
+        <span style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:11px;letter-spacing:.04em;padding:3px 8px;border-radius:20px;background:${
+            isPublished ? "rgba(62,207,142,.15)" : "rgba(255,176,32,.15)"
+          };color:${isPublished ? "var(--accent-green)" : "var(--accent-amber)"};">
+            ${isPublished ? "● PUBLISHED" : "○ DRAFT"}
+          </span>
+          <button class="btn small ${isPublished ? "" : "primary"}" id="togglePublish">
+            ${isPublished ? "Unpublish this day" : "Publish this day"}
+          </button>
+        </span>
+      </div>
+      <div class="slot-grid">
+        ${slots
+          .map((s, i) => {
+            const mine = s.member && Store.currentUser && s.member.id === Store.currentUser.id;
+            const avail = availableMembersForSlot(svsDay, i);
+            const availLine = avail.length
+              ? `<div class="slot-avail">available: ${avail.map((m) => escapeHtml(m.name)).join(", ")}</div>`
+              : `<div class="slot-avail empty-avail">no submissions for this slot</div>`;
+            const members = Store.members;
+            return `
+            <div class="slot-cell">
+              <div class="slot ${s.member ? "filled" : ""} ${mine ? "mine" : ""}">
+                <span class="time">${s.time}</span>
+                <select data-assign="${i}" style="flex:1;margin:0 8px;background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:3px 6px;font-size:11.5px;">
+                  <option value="">— empty —</option>
+                  ${members.map((m) => `<option value="${m.id}" ${s.member && s.member.id === m.id ? "selected" : ""}>${escapeHtml(m.name)}</option>`).join("")}
+                </select>
+              </div>
+              ${availLine}
+            </div>`;
+          })
+          .join("")}
+      </div>
+    </div>
+  `;
+  el.querySelectorAll(".day-tabs button").forEach((b) =>
+    b.addEventListener("click", () => { svsDay = b.dataset.d; renderSvSSchedule(el); })
+  );
+  el.querySelector("#exportDay").onclick = () => {
+    const rows = slots
+      .map((s, i) => `${s.time}\t${s.member ? s.member.name : ""}\t${availableMembersForSlot(svsDay, i).map((m) => m.name).join(", ")}`)
+      .join("\n");
+    downloadText(`${svsDay.replace(/\s/g, "_")}.tsv`, `time\tassigned\tavailable\n${rows}`);
+  };
+  el.querySelector("#togglePublish").onclick = () => {
+    const p = Store.schedulePublished;
+    p[svsDay] = !p[svsDay];
+    Store.schedulePublished = p;
+    renderSvSSchedule(el);
+  };
+  el.querySelectorAll("[data-assign]").forEach((sel) =>
+    sel.addEventListener("change", () => {
+      const i = Number(sel.dataset.assign);
+      const memberId = sel.value;
+      const s = Store.schedule;
+      if (!memberId) {
+        s[svsDay][i].member = null;
+      } else {
+        const m = Store.members.find((mm) => mm.id === memberId);
+        s[svsDay][i].member = m ? { id: m.id, name: m.name } : null;
+      }
+      Store.schedule = s;
+      renderSvSSchedule(el);
+    })
+  );
+}
+
+function downloadText(filename, text) {
+  const blob = new Blob([text], { type: "text/plain" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ---------------------------------------------------------------------------
+// FEEDBACK
+// ---------------------------------------------------------------------------
+function renderFeedback(el) {
+  const items = Store.feedback.slice().sort((a, b) => b.votes - a.votes);
+  const user = Store.currentUser;
+  el.innerHTML = `
+    <div class="eyebrow">// IDEAS & BUGS</div>
+    <h1 class="page-title" style="color:var(--accent-orange)">feedback</h1>
+    <div class="panel">
+      ${
+        user
+          ? `
+        <textarea class="feedback-input" id="fbInput" placeholder="What's missing? Describe an idea or bug..."></textarea>
+        <button class="btn primary" id="fbSubmit" style="margin-top:8px;">Post</button>`
+          : `<div class="gate" style="padding:10px 0;"><button class="btn primary" id="fbSignIn">Sign in to post</button></div>`
+      }
+    </div>
+    <div>
+      ${items
+        .map(
+          (it) => `
+        <div class="feedback-item">
+          <div class="vote-box">
+            <button data-vote="${it.id}" data-dir="1">▲</button>
+            <span class="count">${it.votes}</span>
+            <button data-vote="${it.id}" data-dir="-1">▼</button>
+          </div>
+          <div class="feedback-body">
+            <div class="title">${escapeHtml(it.title || it.body.slice(0, 60))}<span class="status-badge ${it.status}">${it.status.toUpperCase()}</span></div>
+            <div class="meta">${escapeHtml(it.body)}</div>
+            <div class="meta" style="margin-top:4px;">— ${escapeHtml(it.author)} · ${new Date(it.createdAt).toLocaleDateString()}</div>
+          </div>
+        </div>`
+        )
+        .join("") || `<div class="empty">No feedback yet. Be the first to post.</div>`}
+    </div>
+  `;
+  el.querySelector("#fbSignIn")?.addEventListener("click", openSignIn);
+  el.querySelector("#fbSubmit")?.addEventListener("click", () => {
+    const text = el.querySelector("#fbInput").value.trim();
+    if (!text) return;
+    const item = {
+      id: "f" + Date.now(),
+      title: text.slice(0, 60),
+      body: text,
+      author: user.name,
+      votes: 1,
+      status: "open",
+      createdAt: Date.now(),
+    };
+    Store.feedback = [item, ...Store.feedback];
+    renderFeedback(el);
+  });
+  el.querySelectorAll("[data-vote]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const items2 = Store.feedback;
+      const it = items2.find((x) => x.id === b.dataset.vote);
+      it.votes += Number(b.dataset.dir);
+      Store.feedback = items2;
+      renderFeedback(el);
+    })
+  );
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// ---------------------------------------------------------------------------
+// ADMIN
+// ---------------------------------------------------------------------------
+function renderAdmin(el) {
+  const user = Store.currentUser;
+  if (!isAdmin(user)) {
+    el.innerHTML = `
+      <div class="eyebrow">// ADMIN</div>
+      <h1 class="page-title" style="color:var(--accent-gold)">admin</h1>
+      <div class="panel gate">
+        <p>This area is for state/alliance leadership.</p>
+        ${
+          user
+            ? `<p style="font-size:12px;">Signed in as ${user.name} (role: ${user.role || "member"}) — not an admin/officer/leader.</p>`
+            : `<button class="btn primary" id="gateSignIn">Sign in</button>`
+        }
+      </div>
+    `;
+    el.querySelector("#gateSignIn")?.addEventListener("click", openSignIn);
+    return;
+  }
+
+  const st = Store.state;
+  const members = Store.members;
+  const alliances = Store.alliances;
+  const furnaceFc = Store.furnaceFc;
+  const bagSubs = Store.bagSubmissions;
+
+  el.innerHTML = `
+    <div class="eyebrow">// LEADERSHIP</div>
+    <h1 class="page-title" style="color:var(--accent-gold)">admin</h1>
+
+    <div class="panel">
+      <div class="planner-header"><strong>State config</strong></div>
+      <div class="field-row">
+        <div class="field"><label>OUR STATE #</label><input id="admStateNum" value="${st.stateNumber}" /></div>
+        <div class="field"><label>ENEMY STATE #</label><input id="admEnemy" value="${st.enemyState}" /></div>
+        <div class="field"><label>NEXT SVS DATE</label><input id="admDate" type="date" value="${st.svsDate}" /></div>
+        <div class="field"><label>MAX FURNACE LEVEL</label><input id="admFurnace" value="${st.maxFurnaceLevel || ""}" /></div>
+      </div>
+      <button class="btn primary small" id="admSaveState">Save</button>
+      <span id="admStateMsg" style="margin-left:10px;font-size:12px;color:var(--accent-green);"></span>
+    </div>
+
+    <div class="panel">
+      <div class="planner-header"><strong>Alliances (${alliances.length})</strong></div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+        ${
+          alliances
+            .map(
+              (a, i) => `
+          <span style="display:flex;align-items:center;gap:6px;background:var(--panel-2);border:1px solid var(--border);border-radius:4px;padding:5px 6px 5px 10px;font-size:12px;">
+            ${escapeHtml(a)}
+            <button data-adel="${i}" style="background:none;border:none;color:var(--accent-red);font-size:11px;">✕</button>
+          </span>`
+            )
+            .join("") || `<span class="empty" style="padding:4px 0;">No alliances yet.</span>`
+        }
+      </div>
+      <div style="display:flex;gap:8px;">
+        <input id="admNewAlliance" placeholder="New alliance tag (e.g. STK)..." style="flex:1;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
+        <button class="btn small primary" id="admAddAlliance">Add alliance</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="planner-header"><strong>Members (${members.length})</strong></div>
+      <div style="display:flex;flex-direction:column;gap:6px;max-height:320px;overflow:auto;">
+        ${members
+          .map(
+            (m, i) => `
+          <div style="display:grid;grid-template-columns:1fr 90px 100px 32px;gap:6px;align-items:center;">
+            <input data-mfield="name" data-idx="${i}" value="${escapeHtml(m.name)}" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;" />
+            <select data-mfield="alliance" data-idx="${i}" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;">
+              <option value="">—</option>
+              ${alliances.map((a) => `<option ${m.alliance === a ? "selected" : ""}>${escapeHtml(a)}</option>`).join("")}
+              ${m.alliance && !alliances.includes(m.alliance) ? `<option selected>${escapeHtml(m.alliance)}</option>` : ""}
+            </select>
+            <select data-mfield="role" data-idx="${i}" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;">
+              ${["member", "officer", "admin"].map((r) => `<option ${m.role === r ? "selected" : ""}>${r}</option>`).join("")}
+            </select>
+            <button data-mdel="${i}" class="btn small" style="color:var(--accent-red);">✕</button>
+          </div>`
+          )
+          .join("")}
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <input id="admNewMember" placeholder="New member name..." style="flex:1;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
+        <button class="btn small primary" id="admAddMember">Add member</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="planner-header"><strong>SvS prep — bulk actions</strong></div>
+      <p style="font-size:12px;color:var(--text-dim);">${countFilledSlots()} slots currently booked across all days.</p>
+      <button class="btn small" id="admClearSlots" style="color:var(--accent-red);">Clear all booked slots</button>
+    </div>
+
+    <div class="panel">
+      <div class="planner-header"><strong>Furnace brackets (${furnaceFc.length})</strong></div>
+      <p style="font-size:12px;color:var(--text-dim);margin-top:-6px;">Options for the backpack form's "current furnace level" field.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+        ${
+          furnaceFc
+            .map(
+              (c, i) => `
+          <span style="display:flex;align-items:center;gap:6px;background:var(--panel-2);border:1px solid var(--border);border-radius:4px;padding:5px 6px 5px 10px;font-size:12px;">
+            ${escapeHtml(c)}
+            <button data-cdel="${i}" style="background:none;border:none;color:var(--accent-red);font-size:11px;">✕</button>
+          </span>`
+            )
+            .join("") || `<span class="empty" style="padding:4px 0;">No brackets yet.</span>`
+        }
+      </div>
+      <div style="display:flex;gap:8px;">
+        <input id="admNewCategory" placeholder="New bracket (e.g. FC11)..." style="flex:1;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
+        <button class="btn small primary" id="admAddCategory">Add bracket</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="planner-header"><strong>Bag submissions (${Object.keys(bagSubs).length} / ${members.length})</strong></div>
+      <p style="font-size:12px;color:var(--text-dim);margin-top:-6px;">Projected SvS points from each member's backpack submission.</p>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr><th>MEMBER</th>${BAG_SECTIONS.map((s) => `<th>${s.title.replace(/^D\d\s*—\s*/, "")}</th>`).join("")}<th>TOTAL</th><th>UPDATED</th></tr></thead>
+          <tbody>
+            ${
+              members
+                .map((m) => {
+                  const sub = bagSubs[m.id];
+                  if (!sub) return `<tr><td>${escapeHtml(m.name)}</td>${BAG_SECTIONS.map(() => `<td>—</td>`).join("")}<td>—</td><td>—</td></tr>`;
+                  const { bySection, total } = computeBagPoints(sub.values);
+                  return `<tr><td>${escapeHtml(m.name)}</td>${bySection
+                    .map((s) => `<td>${fmtNum(s.points)}</td>`)
+                    .join("")}<td><strong>${fmtNum(total)}</strong></td><td>${new Date(sub.updatedAt).toLocaleDateString()}</td></tr>`;
+                })
+                .join("") || `<tr><td colspan="${BAG_SECTIONS.length + 3}">No members yet.</td></tr>`
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="planner-header"><strong>Feedback moderation (${Store.feedback.length})</strong></div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        ${Store.feedback
+          .map(
+            (it, i) => `
+          <div style="display:flex;gap:8px;align-items:center;background:var(--panel-2);border:1px solid var(--border);border-radius:4px;padding:8px 10px;">
+            <span style="flex:1;font-size:12px;">${escapeHtml(it.title || it.body.slice(0, 40))} <span style="color:var(--text-faint);">(${it.votes} votes)</span></span>
+            <select data-fstatus="${i}" style="background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:4px 6px;font-size:11px;">
+              ${["open", "planned", "done"].map((s) => `<option ${it.status === s ? "selected" : ""}>${s}</option>`).join("")}
+            </select>
+            <button data-fdel="${i}" class="btn small" style="color:var(--accent-red);">✕</button>
+          </div>`
+          )
+          .join("") || `<div class="empty">No feedback submitted yet.</div>`}
+      </div>
+    </div>
+  `;
+
+  el.querySelector("#admAddAlliance").onclick = () => {
+    const tag = el.querySelector("#admNewAlliance").value.trim();
+    if (!tag) return;
+    const a = Store.alliances;
+    if (!a.includes(tag)) a.push(tag);
+    Store.alliances = a;
+    renderAdmin(el);
+  };
+  el.querySelectorAll("[data-adel]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const i = Number(btn.dataset.adel);
+      const a = Store.alliances;
+      a.splice(i, 1);
+      Store.alliances = a;
+      renderAdmin(el);
+    })
+  );
+
+  el.querySelector("#admAddCategory").onclick = () => {
+    const name = el.querySelector("#admNewCategory").value.trim();
+    if (!name) return;
+    const c = Store.furnaceFc;
+    if (!c.includes(name)) c.push(name);
+    Store.furnaceFc = c;
+    renderAdmin(el);
+  };
+  el.querySelectorAll("[data-cdel]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const i = Number(btn.dataset.cdel);
+      const c = Store.furnaceFc;
+      c.splice(i, 1);
+      Store.furnaceFc = c;
+      renderAdmin(el);
+    })
+  );
+
+  el.querySelector("#admSaveState").onclick = () => {
+    Store.state = {
+      ...st,
+      stateNumber: el.querySelector("#admStateNum").value.trim(),
+      enemyState: el.querySelector("#admEnemy").value.trim(),
+      svsDate: el.querySelector("#admDate").value,
+      maxFurnaceLevel: el.querySelector("#admFurnace").value.trim(),
+    };
+    el.querySelector("#admStateMsg").textContent = "Saved.";
+    renderShell();
+  };
+
+  el.querySelectorAll("[data-mfield]").forEach((input) =>
+    input.addEventListener("change", () => {
+      const i = Number(input.dataset.idx);
+      const field = input.dataset.mfield;
+      const m = Store.members;
+      m[i][field] = input.value;
+      Store.members = m;
+      if (Store.currentUser && Store.currentUser.id === m[i].id) {
+        Store.currentUser = m[i];
+        renderShell();
+      }
+    })
+  );
+  el.querySelectorAll("[data-mdel]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const i = Number(btn.dataset.mdel);
+      const m = Store.members;
+      m.splice(i, 1);
+      Store.members = m;
+      renderAdmin(el);
+    })
+  );
+  el.querySelector("#admAddMember").onclick = () => {
+    const name = el.querySelector("#admNewMember").value.trim();
+    if (!name) return;
+    Store.members = [...Store.members, { id: "m" + Date.now(), name, alliance: "", role: "member" }];
+    renderAdmin(el);
+  };
+  el.querySelector("#admClearSlots").onclick = () => {
+    const sched = Store.schedule;
+    Object.keys(sched).forEach((day) => sched[day].forEach((s) => (s.member = null)));
+    Store.schedule = sched;
+    renderAdmin(el);
+  };
+  el.querySelectorAll("[data-fstatus]").forEach((sel) =>
+    sel.addEventListener("change", () => {
+      const i = Number(sel.dataset.fstatus);
+      const fb = Store.feedback;
+      fb[i].status = sel.value;
+      Store.feedback = fb;
+    })
+  );
+  el.querySelectorAll("[data-fdel]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      const i = Number(btn.dataset.fdel);
+      const fb = Store.feedback;
+      fb.splice(i, 1);
+      Store.feedback = fb;
+      renderAdmin(el);
+    })
+  );
+}
+
+</script>

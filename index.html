@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>State Combat Analytics</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="shell"></div>
+
+  <!-- Optional shared backend — only used once SUPABASE_CONFIG in data.js
+       is filled in. Harmless to load unconfigured (falls back to
+       localStorage, same as always). See README.md -> "Going multi-user". -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
