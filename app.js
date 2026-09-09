@@ -18,6 +18,7 @@ const ROUTES = {
   "/rookie-off": renderRookieOff,
   "/feedback": renderFeedback,
   "/admin": renderAdmin,
+  "/championship": renderChampionship,
 };
 // wire up stub routes for planned tools
 PLANNED_TOOLS.forEach((t) => {
@@ -291,6 +292,11 @@ function renderHome(el) {
         href: "#/feedback", color: "var(--accent-orange)", title: "feedback",
         desc: "Post, vote, and track ideas & bugs.",
         meta: "TELL US WHAT'S MISSING", plus: true,
+      })}
+      ${opCard({
+        href: "#/championship", color: "var(--accent-green)", title: "championship",
+        desc: "Alliance Championship lane planner — import players, auto-balance lanes.",
+        meta: `${Store.championship.players.length} PLAYERS IMPORTED`,
       })}
       ${PLANNED_TOOLS.map((t) =>
         opCard({
@@ -2524,4 +2530,423 @@ function renderAdmin(el) {
       renderAdmin(el);
     })
   );
+}
+
+
+// ---------------------------------------------------------------------------
+// ALLIANCE CHAMPIONSHIP — lane planner
+// Admin-only tool. Screenshots -> client-side OCR extract (Tesseract.js) ->
+// editable review list -> auto-balance into 3 lanes (two "primary" lanes
+// maxed to 20/20 and balanced by total power, the third lane holds whoever
+// is left over) -> manual drag/swap/edit -> explicit Save/Clear. See
+// balanceChampionshipLanes, parseChampionshipOcrText, DEFAULT_CHAMPIONSHIP
+// etc. in data.js for the underlying data model and algorithm.
+//
+// Deliberately NOT wired into the bag planner's debounced autosave system:
+// this is an admin planning tool with its own explicit "Save Championship
+// Plan" button (per the feature request), not a per-member form that needs
+// to survive an accidental refresh mid-keystroke. Working edits live in
+// champWorking (in-memory only, a deep copy of the last-saved plan) until
+// Save writes them back to Store.championship; Clear wipes both. Reloading
+// the page always starts from whatever was last explicitly saved.
+//
+// Store.championship is its own key, completely separate from
+// Store.members/bagSubmissions/bagDrafts/schedule — nothing in this section
+// ever reads or writes any of those, and nothing in the bag planner reads
+// or writes this.
+// ---------------------------------------------------------------------------
+let champWorking = null; // deep-copied working draft of Store.championship, or null before first load
+let champDirty = false; // true once champWorking differs from the last-saved Store.championship
+let champOcrBusy = false;
+let champOcrStatus = "";
+let champDragId = null; // id of the player currently mid-drag
+
+function ensureChampWorking() {
+  if (!champWorking) {
+    const saved = Store.championship;
+    champWorking = {
+      players: (saved.players || []).map((p) => ({ ...p })),
+      lanes: {
+        left: [...(saved.lanes?.left || [])],
+        middle: [...(saved.lanes?.middle || [])],
+        right: [...(saved.lanes?.right || [])],
+      },
+      primaryPair: saved.primaryPair || "left_right",
+    };
+    champDirty = false;
+  }
+  return champWorking;
+}
+
+function champPlayerById(id) {
+  return champWorking.players.find((p) => p.id === id) || null;
+}
+
+function laneOf(id) {
+  return LANE_KEYS.find((k) => (champWorking.lanes[k] || []).includes(id)) || null;
+}
+
+function champUnassignedIds() {
+  const assigned = new Set(LANE_KEYS.flatMap((k) => champWorking.lanes[k] || []));
+  return champWorking.players.filter((p) => !assigned.has(p.id)).map((p) => p.id);
+}
+
+function champLaneTotal(key) {
+  return (champWorking.lanes[key] || []).reduce((sum, id) => sum + (champPlayerById(id)?.power || 0), 0);
+}
+
+function newChampPlayerId() {
+  return "cp_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+// Merges freshly-OCR'd (or manually typed) rows into the working roster,
+// skipping anyone already on the list (case-insensitive name match) so
+// re-uploading an overlapping screenshot never creates a duplicate. Returns
+// how many NEW players were added.
+function mergeChampionshipImports(found) {
+  const existingNames = new Set(champWorking.players.map((p) => p.name.trim().toLowerCase()));
+  let added = 0;
+  found.forEach((f) => {
+    const key = (f.name || "").trim().toLowerCase();
+    if (!key || existingNames.has(key)) return;
+    existingNames.add(key);
+    champWorking.players.push({ id: newChampPlayerId(), rank: f.rank ?? null, name: f.name.trim(), power: f.power });
+    added++;
+  });
+  if (added) champDirty = true;
+  return added;
+}
+
+// Moves a player into targetLane (one of LANE_KEYS), or out to "unassigned"
+// when targetLane is falsy. Refuses (with an alert, no partial change) if
+// the target lane is already at the 20-player cap.
+function moveChampionshipPlayer(id, targetLane) {
+  if (targetLane && (champWorking.lanes[targetLane] || []).length >= CHAMPIONSHIP_LANE_CAP && laneOf(id) !== targetLane) {
+    alert(`${LANE_LABELS[targetLane]} lane is already full (${CHAMPIONSHIP_LANE_CAP}/${CHAMPIONSHIP_LANE_CAP}).`);
+    return false;
+  }
+  LANE_KEYS.forEach((k) => { champWorking.lanes[k] = (champWorking.lanes[k] || []).filter((pid) => pid !== id); });
+  if (targetLane && LANE_KEYS.includes(targetLane)) champWorking.lanes[targetLane].push(id);
+  champDirty = true;
+  return true;
+}
+
+// Swaps two players' lane assignments (either side may currently be
+// "unassigned") — always allowed, since a straight swap can never push a
+// lane past its existing size, let alone its cap.
+function swapChampionshipPlayers(idA, idB) {
+  if (idA === idB) return;
+  const laneA = laneOf(idA);
+  const laneB = laneOf(idB);
+  if (laneA === laneB) return; // both unassigned, or already in the same lane — nothing to do
+  LANE_KEYS.forEach((k) => {
+    champWorking.lanes[k] = champWorking.lanes[k].filter((pid) => pid !== idA && pid !== idB);
+  });
+  if (laneB) champWorking.lanes[laneB].push(idA);
+  if (laneA) champWorking.lanes[laneA].push(idB);
+  champDirty = true;
+}
+
+function deleteChampionshipPlayer(id) {
+  LANE_KEYS.forEach((k) => { champWorking.lanes[k] = (champWorking.lanes[k] || []).filter((pid) => pid !== id); });
+  champWorking.players = champWorking.players.filter((p) => p.id !== id);
+  champDirty = true;
+}
+
+function championshipPlayerRowHtml(p) {
+  if (!p) return "";
+  return `
+    <div class="rank-item" draggable="true" data-cpid="${p.id}">
+      <div class="left">
+        <span class="name">${escapeHtml(p.name)}</span>
+        ${p.rank != null ? `<span class="desc">Screenshot rank #${p.rank}</span>` : ""}
+      </div>
+      <span class="score">${formatFullNumber(p.power)}</span>
+    </div>
+  `;
+}
+
+function championshipLanePanelHtml(key, isOverflow, w, total) {
+  const ids = w.lanes[key] || [];
+  return `
+    <div class="panel">
+      <div class="planner-header">
+        <strong style="color:var(--accent-green);">${LANE_LABELS[key]}</strong>
+        <span class="status-badge ${isOverflow ? "planned" : "done"}">${isOverflow ? "OVERFLOW" : "PRIMARY"}</span>
+      </div>
+      <div class="summary-row"><span class="k">PLAYERS</span><span class="v">${ids.length} / ${CHAMPIONSHIP_LANE_CAP}</span></div>
+      <div class="summary-row"><span class="k">TOTAL POWER</span><span class="v">${formatFullNumber(total)}</span></div>
+      <div class="lane-drop" data-lanedrop="${key}" style="min-height:60px;margin-top:8px;">
+        ${
+          ids.length
+            ? `<div class="rank-list">${ids.map((id) => championshipPlayerRowHtml(champPlayerById(id))).join("")}</div>`
+            : `<div class="empty">Drop players here.</div>`
+        }
+      </div>
+    </div>
+  `;
+}
+
+function renderChampionship(el) {
+  const user = Store.currentUser;
+  if (!user) {
+    el.innerHTML = `
+      <div class="panel" style="text-align:center;padding:32px 20px;">
+        <div class="eyebrow" style="color:var(--accent-green);margin-bottom:10px;">SIGN IN REQUIRED</div>
+        <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 16px;">The Alliance Championship planner is for alliance leadership. Sign in to continue.</p>
+        <button class="btn primary" id="chGoSignIn">Sign in</button>
+      </div>
+    `;
+    el.querySelector("#chGoSignIn").onclick = openSignIn;
+    return;
+  }
+  if (user.role !== "admin") {
+    el.innerHTML = `
+      <div class="eyebrow">// ALLIANCE CHAMPIONSHIP</div>
+      <h1 class="page-title" style="color:var(--accent-green)">championship</h1>
+      <div class="panel gate">
+        <p>This tool is for state/alliance leadership.</p>
+        <p style="font-size:12px;">Signed in as ${escapeHtml(user.name)} (${roleLabel(user.role)}) — ask an admin for access if you need to plan Championship lanes.</p>
+      </div>
+    `;
+    return;
+  }
+
+  ensureChampWorking();
+  const w = champWorking;
+  const sortedPlayers = [...w.players].sort((a, b) => b.power - a.power);
+  const primaryKeys = PRIMARY_PAIR_LANES[w.primaryPair] || PRIMARY_PAIR_LANES.left_right;
+  const overflowKey = LANE_KEYS.find((k) => !primaryKeys.includes(k));
+  const totals = Object.fromEntries(LANE_KEYS.map((k) => [k, champLaneTotal(k)]));
+  const primaryDiff = Math.abs(totals[primaryKeys[0]] - totals[primaryKeys[1]]);
+  const unassignedIds = champUnassignedIds();
+  const hasLaneData = LANE_KEYS.some((k) => (w.lanes[k] || []).length > 0);
+  const showLanes = sortedPlayers.length > 0;
+
+  el.innerHTML = `
+    <div class="eyebrow">// ALLIANCE CHAMPIONSHIP</div>
+    <h1 class="page-title" style="color:var(--accent-green)">championship</h1>
+    <p style="font-size:12.5px;color:var(--text-dim);margin:-6px 0 16px;">
+      Import the Championship player list from screenshots, review it, then auto-balance two maxed 20-player lanes as evenly as possible — everyone else overflows into the third lane. Separate from bag planning; nothing here touches member accounts, PINs, or bag data.
+    </p>
+
+    <div class="section-title">UPLOAD SCREENSHOTS</div>
+    <div class="panel">
+      <p style="font-size:12px;color:var(--text-dim);margin:0 0 12px;">Upload one or more screenshots of the Alliance Championship player rankings. Overlapping screenshots are fine — players already on the list below won't be added twice.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <input type="file" id="champFiles" accept="image/*" multiple style="max-width:280px;font-size:12px;color:var(--text-dim);" />
+        <button class="btn primary small" id="champProcess" ${champOcrBusy ? "disabled" : ""}>${champOcrBusy ? "Processing…" : "Process Screenshots"}</button>
+      </div>
+      ${champOcrStatus ? `<p style="font-size:11.5px;color:var(--text-faint);margin:10px 0 0;">${escapeHtml(champOcrStatus)}</p>` : ""}
+    </div>
+
+    <div class="section-title">PLAYER LIST — REVIEW &amp; CORRECT</div>
+    <div class="panel">
+      ${
+        sortedPlayers.length
+          ? `<div style="overflow-x:auto;">
+              <table>
+                <thead><tr><th>RANK</th><th>PLAYER</th><th>POWER</th><th></th></tr></thead>
+                <tbody>
+                  ${sortedPlayers
+                    .map(
+                      (p, i) => `
+                    <tr>
+                      <td>#${i + 1}</td>
+                      <td><input type="text" data-cpname="${p.id}" value="${escapeHtml(p.name)}" style="width:100%;min-width:120px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-size:12.5px;" /></td>
+                      <td><input type="text" inputmode="decimal" data-cppower="${p.id}" value="${formatFullNumber(p.power)}" style="width:100%;min-width:110px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-size:12.5px;" /></td>
+                      <td><button class="btn small" data-cpdel="${p.id}" style="color:var(--accent-red);">delete</button></td>
+                    </tr>`
+                    )
+                    .join("")}
+                </tbody>
+              </table>
+            </div>`
+          : `<div class="empty">No players imported yet — upload screenshots above or add one manually.</div>`
+      }
+      <button class="btn small" id="champAddPlayer" style="margin-top:12px;">+ Add Player</button>
+    </div>
+
+    <div class="section-title">PRIMARY LANES</div>
+    <div class="panel">
+      <p style="font-size:12px;color:var(--text-dim);margin:0 0 12px;">Choose which two lanes get filled to 20/20 with the strongest, most evenly-matched players. The lane left out becomes the overflow lane.</p>
+      <div class="pill-toggle">
+        <button data-pair="left_right" class="${w.primaryPair === "left_right" ? "active" : ""}">LEFT + RIGHT</button>
+        <button data-pair="left_middle" class="${w.primaryPair === "left_middle" ? "active" : ""}">LEFT + MIDDLE</button>
+        <button data-pair="middle_right" class="${w.primaryPair === "middle_right" ? "active" : ""}">MIDDLE + RIGHT</button>
+      </div>
+      <button class="btn primary" id="champBalance" style="margin-top:14px;">${hasLaneData ? "Rebalance Lanes" : "Balance Lanes"}</button>
+      ${
+        w.players.length > CHAMPIONSHIP_TOTAL_CAP
+          ? `<p style="font-size:11.5px;color:var(--accent-amber);margin:10px 0 0;">${w.players.length - CHAMPIONSHIP_TOTAL_CAP} lowest-power player(s) beyond the ${CHAMPIONSHIP_TOTAL_CAP}-player cap will be left unassigned.</p>`
+          : ""
+      }
+    </div>
+
+    ${
+      showLanes
+        ? `
+    <div class="section-title">RESULTS</div>
+    <div class="summary-row" style="margin-bottom:12px;">
+      <span class="k">PRIMARY LANES POWER DIFFERENCE (${LANE_LABELS[primaryKeys[0]]} vs ${LANE_LABELS[primaryKeys[1]]})</span>
+      <span class="v" style="color:var(--accent-green);">${formatFullNumber(primaryDiff)}</span>
+    </div>
+    <div class="lane-grid">
+      ${LANE_KEYS.map((key) => championshipLanePanelHtml(key, key === overflowKey, w, totals[key])).join("")}
+    </div>
+    <div class="section-title">UNASSIGNED${w.players.length > CHAMPIONSHIP_TOTAL_CAP ? ` <span style="color:var(--text-faint);font-weight:400;">(includes anyone beyond the ${CHAMPIONSHIP_TOTAL_CAP}-player cap)</span>` : ""}</div>
+    <div class="panel lane-drop" data-lanedrop="" style="min-height:60px;">
+      ${
+        unassignedIds.length
+          ? `<div class="rank-list">${unassignedIds.map((id) => championshipPlayerRowHtml(champPlayerById(id))).join("")}</div>`
+          : `<div class="empty">Everyone is assigned to a lane.</div>`
+      }
+    </div>`
+        : ""
+    }
+
+    <div style="display:flex;gap:10px;margin-top:20px;flex-wrap:wrap;align-items:center;">
+      <button class="btn primary" id="champSave">Save Championship Plan</button>
+      <button class="btn small" id="champClear" style="color:var(--accent-red);">Clear Championship Plan</button>
+      ${champDirty ? `<span style="font-size:11.5px;color:var(--accent-amber);">Unsaved changes</span>` : ""}
+    </div>
+  `;
+
+  wireChampionshipHandlers(el);
+}
+
+function wireChampionshipHandlers(el) {
+  el.querySelector("#champProcess")?.addEventListener("click", async () => {
+    const input = el.querySelector("#champFiles");
+    const files = input?.files ? Array.from(input.files) : [];
+    if (!files.length) { alert("Choose one or more screenshot images first."); return; }
+    if (typeof Tesseract === "undefined") {
+      champOcrStatus = "OCR library failed to load — check your internet connection and try again.";
+      renderChampionship(el);
+      return;
+    }
+    champOcrBusy = true;
+    champOcrStatus = `Reading ${files.length} screenshot${files.length === 1 ? "" : "s"}…`;
+    renderChampionship(el);
+    let totalAdded = 0;
+    try {
+      for (let i = 0; i < files.length; i++) {
+        champOcrStatus = `Reading screenshot ${i + 1} of ${files.length}…`;
+        const { data } = await Tesseract.recognize(files[i], "eng");
+        const found = parseChampionshipOcrText(data.text);
+        totalAdded += mergeChampionshipImports(found);
+      }
+      champOcrStatus = `Done — added ${totalAdded} new player${totalAdded === 1 ? "" : "s"} from ${files.length} screenshot${files.length === 1 ? "" : "s"}. Review the list below before balancing.`;
+    } catch (err) {
+      console.error("Championship OCR failed:", err);
+      champOcrStatus = "Couldn't read one of those screenshots — try a clearer image, or add players manually below.";
+    }
+    champOcrBusy = false;
+    renderChampionship(el);
+  });
+
+  el.querySelector("#champAddPlayer")?.addEventListener("click", () => {
+    champWorking.players.push({ id: newChampPlayerId(), rank: null, name: "New Player", power: 0 });
+    champDirty = true;
+    renderChampionship(el);
+  });
+
+  el.querySelectorAll("[data-cpname]").forEach((inp) =>
+    inp.addEventListener("change", () => {
+      const p = champPlayerById(inp.dataset.cpname);
+      if (p) { p.name = inp.value.trim() || p.name; champDirty = true; }
+      renderChampionship(el);
+    })
+  );
+  el.querySelectorAll("[data-cppower]").forEach((inp) =>
+    inp.addEventListener("change", () => {
+      const p = champPlayerById(inp.dataset.cppower);
+      const parsed = parsePowerToken(inp.value);
+      if (p && parsed != null) { p.power = parsed; champDirty = true; }
+      renderChampionship(el);
+    })
+  );
+  el.querySelectorAll("[data-cpdel]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      deleteChampionshipPlayer(btn.dataset.cpdel);
+      renderChampionship(el);
+    })
+  );
+
+  el.querySelectorAll("[data-pair]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      champWorking.primaryPair = btn.dataset.pair;
+      champDirty = true;
+      renderChampionship(el);
+    })
+  );
+
+  el.querySelector("#champBalance")?.addEventListener("click", () => {
+    if (!champWorking.players.length) { alert("Import or add at least one player first."); return; }
+    champWorking.lanes = balanceChampionshipLanes(champWorking.players, champWorking.primaryPair);
+    champDirty = true;
+    renderChampionship(el);
+  });
+
+  // Drag-and-drop: drop a player row onto another player's row to swap the
+  // two, or onto a lane's drop-zone (including the "Unassigned" panel) to
+  // move it there outright.
+  el.querySelectorAll("[data-cpid]").forEach((row) => {
+    row.addEventListener("dragstart", (e) => {
+      champDragId = row.dataset.cpid;
+      row.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", champDragId);
+    });
+    row.addEventListener("dragend", () => { row.classList.remove("dragging"); champDragId = null; });
+    row.addEventListener("dragover", (e) => e.preventDefault());
+    row.addEventListener("drop", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const droppedId = champDragId || e.dataTransfer.getData("text/plain");
+      const targetId = row.dataset.cpid;
+      if (droppedId && targetId && droppedId !== targetId) swapChampionshipPlayers(droppedId, targetId);
+      champDragId = null;
+      renderChampionship(el);
+    });
+  });
+  el.querySelectorAll("[data-lanedrop]").forEach((zone) => {
+    zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("dragover"); });
+    zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      zone.classList.remove("dragover");
+      const droppedId = champDragId || e.dataTransfer.getData("text/plain");
+      champDragId = null;
+      if (!droppedId) return;
+      moveChampionshipPlayer(droppedId, zone.dataset.lanedrop || null);
+      renderChampionship(el);
+    });
+  });
+
+  el.querySelector("#champSave")?.addEventListener("click", () => {
+    Store.championship = {
+      players: champWorking.players.map((p) => ({ ...p })),
+      lanes: {
+        left: [...champWorking.lanes.left],
+        middle: [...champWorking.lanes.middle],
+        right: [...champWorking.lanes.right],
+      },
+      primaryPair: champWorking.primaryPair,
+    };
+    champDirty = false;
+    renderChampionship(el);
+  });
+
+  el.querySelector("#champClear")?.addEventListener("click", () => {
+    const confirmed = confirm(
+      "Are you sure you want to clear the Alliance Championship plan? This will permanently remove the imported player list, screenshot data, and lane assignments. Member accounts, bags, and time slots will NOT be affected."
+    );
+    if (!confirmed) return;
+    Store.championship = { players: [], lanes: { left: [], middle: [], right: [] }, primaryPair: "left_right" };
+    champWorking = null; // force ensureChampWorking() to reload the fresh empty state
+    champDirty = false;
+    champOcrStatus = "";
+    renderChampionship(el);
+  });
 }

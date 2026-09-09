@@ -174,8 +174,8 @@ page once the app is running:
 
 ## Pages
 
-- **Home** (`#/`) — operation cards (svs_prep, rookie_off, feedback, and
-  the planned tools) + database stat tiles.
+- **Home** (`#/`) — operation cards (svs_prep, rookie_off, feedback,
+  championship, and the planned tools) + database stat tiles.
 - **Rookie-Off** (`#/rookie-off`) — T1 troop promotion leaderboard, see
   "Rookie-Off" above. Signed-in members only.
 - **SvS prep** (`#/svs`) — MY BAG tab lets a signed-in member submit their
@@ -224,6 +224,65 @@ Gamer IDs, alliance tags, and roles are all untouched, so everyone signs
 back in exactly as before and just sees a blank MY BAG. Because it's
 state-wide and irreversible, it asks for confirmation (a plain `confirm()`
 dialog) before doing anything, and does nothing if that's cancelled.
+
+### Alliance Championship lane planner
+
+**Championship** (`#/championship`) — an `admin`-only tool (same gate as
+SCHEDULE and Admin — officers and regular members see a "leadership only"
+message instead) for splitting the Alliance Championship roster into three
+balanced lanes. It's a completely separate data set from everything else on
+the site: its own `Store.championship` key, its own roster of "players"
+(name + power, optionally an OCR'd rank) that has nothing to do with member
+accounts, logins, PINs, or bag data. Clearing or editing it never touches
+`Store.members`, `Store.bagSubmissions`, `Store.bagDrafts`, or
+`Store.schedule`, and vice versa.
+
+The workflow matches the four steps on the page, top to bottom:
+
+1. **Upload Screenshots** — pick one or more screenshots of the Alliance
+   Championship rankings and hit **Process Screenshots**. This reads the
+   images entirely in the browser using [Tesseract.js](https://github.com/naptha/tesseract.js)
+   (loaded from a CDN in `index.html`, right alongside the optional
+   Supabase script — harmless if it fails to load, e.g. offline) — nothing
+   is uploaded anywhere. Each line of recognized text is checked for a
+   trailing power value (handles `185,000,000`, `185M`, `185.4M`, `1.2B`,
+   and bare numbers) and, if found, whatever's left of the line becomes the
+   player name, with a leading `#12` or `12.` picked off as the rank if
+   present. Players already on the list (matched by name, case-insensitive)
+   are skipped, so uploading a few overlapping screenshots of the same
+   leaderboard never creates duplicates.
+2. **Player list — review & correct** — every imported (or manually added)
+   player shows up in an editable table, sorted strongest-to-weakest. Admins
+   can fix a misread name or power value directly in the row (power accepts
+   the same `185M` / `1.2B` shorthand as the OCR step), delete a bad
+   read, or use **+ Add Player** to type someone in by hand — useful for
+   anyone the OCR missed entirely, or for skipping screenshots altogether.
+3. **Primary lanes + Balance Lanes** — pick which two lanes (Left+Right,
+   Left+Middle, or Middle+Right — Left+Right is the default) get filled to
+   a maxed 20/20 using the strongest players, then click **Balance Lanes**.
+   This takes the top 40 players by power, splits them across the two
+   chosen lanes using a greedy largest-first placement followed by a
+   pairwise-swap pass that keeps trying beneficial swaps until neither lane
+   total can get any closer, and puts everyone from #41 down (up to 20)
+   into the leftover lane as overflow — anyone past the 60-player cap is
+   left unassigned rather than silently dropped. **Results** shows all
+   three lanes side by side (player count, total power, and the roster),
+   plus the power difference between the two primary lanes so it's obvious
+   at a glance how even the split came out.
+4. **Manual adjustments** — after balancing, drag any player row onto
+   another player's row to swap the two between lanes (or between a lane
+   and the Unassigned panel), or onto a lane's empty area to move them
+   there outright — a lane refuses a drop once it's at 20/20. Every move
+   instantly recalculates each lane's count, total power, and the primary
+   lanes' power difference.
+
+Nothing here saves automatically. **Save Championship Plan** writes the
+current roster and lane assignments to `Store.championship` (surviving a
+refresh, tab close, or Supabase sync to other admins, exactly like every
+other Store key); until it's clicked, an "Unsaved changes" note shows next
+to the button. **Clear Championship Plan** asks for confirmation, then
+wipes the imported roster and lane assignments back to empty — it does not
+touch any member, bag, PIN, or schedule data.
 
 ### Admins editing a member's bag
 

@@ -327,19 +327,15 @@ const SEED_FEEDBACK = [
 
 // Tools that don't exist yet — shown on the home page as "coming soon" so
 // there's a place for them once they're built. Add more entries here as
-// you build them out.
+// you build them out. Alliance Championship used to be one of these — it's
+// a real, built page now (see renderChampionship in app.js), so it's wired
+// up as its own home-page card + route instead of living in this list.
 const PLANNED_TOOLS = [
   {
     id: "bears",
     title: "bear_calculator",
     desc: "Bear Trap hit planner — squad comp, gear thresholds, hit timing.",
     color: "var(--accent-teal)",
-  },
-  {
-    id: "championship",
-    title: "alliance_championship",
-    desc: "Alliance Championship planner — event scoring and prep tracker.",
-    color: "var(--accent-purple)",
   },
 ];
 
@@ -376,6 +372,10 @@ const SUPABASE_SYNCED_DEFAULTS = {
   wos_alliance_colors: {},
   wos_bag_submissions: {},
   wos_bag_drafts: {},
+  // Alliance Championship lane plan — kept as its own literal here (not a
+  // reference to DEFAULT_CHAMPIONSHIP, which is defined further down the
+  // file) so this object's shape doesn't depend on declaration order.
+  wos_championship: { players: [], lanes: { left: [], middle: [], right: [] }, primaryPair: "left_right" },
 };
 
 // ---------------------------------------------------------------------------
@@ -439,6 +439,7 @@ const Store = {
       this._set("wos_alliance_colors", {});
       this._set("wos_bag_submissions", {});
       this._set("wos_bag_drafts", {});
+      this._set("wos_championship", { players: [], lanes: { left: [], middle: [], right: [] }, primaryPair: "left_right" });
       this._set("wos_current_user", null);
       localStorage.setItem("wos_seeded_v2", "1");
     } else {
@@ -591,6 +592,15 @@ const Store = {
   get bagDrafts() { return this._synced("wos_bag_drafts", {}).get(); },
   set bagDrafts(v) { this._synced("wos_bag_drafts", {}).set(v); },
 
+  // Alliance Championship lane plan — separate from every bag/member key
+  // above; see the "Alliance Championship" block further down this file.
+  get championship() {
+    return this._synced("wos_championship", { players: [], lanes: { left: [], middle: [], right: [] }, primaryPair: "left_right" }).get();
+  },
+  set championship(v) {
+    this._synced("wos_championship", { players: [], lanes: { left: [], middle: [], right: [] }, primaryPair: "left_right" }).set(v);
+  },
+
   // Always localStorage-only, Supabase or not — see the comment above
   // SUPABASE_SYNCED_DEFAULTS.
   get currentUser() { return this._get("wos_current_user", null); },
@@ -625,6 +635,161 @@ function luckyWheelPoints(gems) {
 
 function isAdmin(user) {
   return !!user && (user.role === "admin" || user.role === "leader" || user.role === "officer");
+}
+
+// ---------------------------------------------------------------------------
+// Alliance Championship — lane planner. Entirely separate storage from the
+// bag planner (Store.bagSubmissions/bagDrafts/schedule) and from
+// Store.members — a Championship "player" here is a standalone roster
+// entry (imported from screenshots or typed in by an admin), not tied to a
+// site account/login at all, so clearing or editing it never touches
+// anyone's member profile, PIN, or bag data.
+// ---------------------------------------------------------------------------
+const LANE_KEYS = ["left", "middle", "right"];
+const LANE_LABELS = { left: "LEFT", middle: "MIDDLE", right: "RIGHT" };
+const CHAMPIONSHIP_LANE_CAP = 20;
+const CHAMPIONSHIP_TOTAL_CAP = 60; // 3 lanes x 20 — anyone beyond this (by power) is left unassigned
+const PRIMARY_PAIR_LANES = {
+  left_right: ["left", "right"],
+  left_middle: ["left", "middle"],
+  middle_right: ["middle", "right"],
+};
+
+const DEFAULT_CHAMPIONSHIP = {
+  players: [], // [{ id, rank: number|null (as OCR'd, informational only), name, power }]
+  lanes: { left: [], middle: [], right: [] }, // arrays of player ids
+  primaryPair: "left_right", // key into PRIMARY_PAIR_LANES — which two lanes get maxed to 20/20
+};
+
+// Accepts "185,000,000", "185M", "185.4M", "1.2B", "500K", or a bare
+// integer, and returns a plain number — or null if it doesn't look like a
+// power value at all. Used for both OCR-extracted text and manual entry,
+// so an admin can type "185M" directly instead of counting zeros.
+function parsePowerToken(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim().toUpperCase().replace(/[,\s]/g, "");
+  if (!s) return null;
+  const m = s.match(/^(\d+(?:\.\d+)?)([KMB])?$/);
+  if (!m) return null;
+  let n = parseFloat(m[1]);
+  if (!isFinite(n)) return null;
+  if (m[2] === "K") n *= 1e3;
+  else if (m[2] === "M") n *= 1e6;
+  else if (m[2] === "B") n *= 1e9;
+  return Math.round(n);
+}
+
+// Full-number, comma-separated display (e.g. "185,000,000") — the results
+// section shows exact totals, not the abbreviated "185M" style used
+// elsewhere on the site (fmtNum in app.js), since exact power differences
+// are the whole point of the balancing display.
+function formatFullNumber(n) {
+  n = Math.round(Number(n) || 0);
+  return n.toLocaleString("en-US");
+}
+
+// One line of OCR'd screenshot text -> { rank, name, power } or null. Picks
+// the LAST power-shaped token on the line (name text almost always comes
+// before the power figure in these screenshots), and treats a small
+// leading number (with a separator like ". " or ") " or "#") as the rank.
+function parseChampionshipOcrLine(line) {
+  const tokenRe = /(\d{1,3}(?:,\d{3}){1,4}(?:\.\d+)?|\d+(?:\.\d+)?\s*[KMB]\b|\d{4,})/gi;
+  const matches = [...line.matchAll(tokenRe)];
+  if (!matches.length) return null;
+  const last = matches[matches.length - 1];
+  const power = parsePowerToken(last[0]);
+  // Filter out stray small numbers (dates, percentages, etc.) that happen
+  // to match the pattern but are implausible as an alliance power figure.
+  if (!power || power < 1000) return null;
+
+  let before = line.slice(0, last.index).trim();
+  let rank = null;
+  const rankMatch = before.match(/^#?(\d{1,3})[.).\s-]+/);
+  if (rankMatch) {
+    rank = parseInt(rankMatch[1], 10);
+    before = before.slice(rankMatch[0].length).trim();
+  }
+  const name = before.replace(/[|_~`]+/g, " ").replace(/\s{2,}/g, " ").trim();
+  if (!name) return null;
+  return { rank, name, power };
+}
+
+function parseChampionshipOcrText(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => parseChampionshipOcrLine(line))
+    .filter(Boolean);
+}
+
+// Splits `items` (each { id, power }, any order) into two groups, each
+// capped at `capEach`, minimizing the difference between the groups'
+// total power. Greedy "always add to the currently-lighter side" (a
+// standard longest-processing-time heuristic) gets close on its own; the
+// swap pass afterward is a simple local-search polish — try every
+// cross-group pair, keep any swap that shrinks the gap, repeat until
+// nothing helps. Cheap and fast at the sizes this tool deals with (<=40
+// items), and doesn't need to be perfectly optimal to be a good plan.
+function balanceTwoGroups(items, capEach) {
+  const sorted = [...items].sort((a, b) => b.power - a.power);
+  const a = [];
+  const b = [];
+  let sumA = 0;
+  let sumB = 0;
+  sorted.forEach((p) => {
+    if (a.length >= capEach) { b.push(p); sumB += p.power; return; }
+    if (b.length >= capEach) { a.push(p); sumA += p.power; return; }
+    if (sumA <= sumB) { a.push(p); sumA += p.power; }
+    else { b.push(p); sumB += p.power; }
+  });
+
+  let improved = true;
+  let guard = 0;
+  while (improved && guard < 500) {
+    improved = false;
+    guard++;
+    for (let i = 0; i < a.length; i++) {
+      for (let j = 0; j < b.length; j++) {
+        const diffNow = Math.abs(sumA - sumB);
+        const newSumA = sumA - a[i].power + b[j].power;
+        const newSumB = sumB - b[j].power + a[i].power;
+        if (Math.abs(newSumA - newSumB) < diffNow) {
+          const tmp = a[i];
+          a[i] = b[j];
+          b[j] = tmp;
+          sumA = newSumA;
+          sumB = newSumB;
+          improved = true;
+        }
+      }
+    }
+  }
+
+  return { aIds: a.map((p) => p.id), bIds: b.map((p) => p.id), sumA, sumB };
+}
+
+// Full plan: sort everyone by power, take the strongest CHAMPIONSHIP_TOTAL_CAP
+// (60) — anyone past that isn't placed in a lane at all — split the
+// strongest 40 of those into the two chosen primary lanes (balanced, 20/20
+// when there are enough players), and send the rest to the remaining
+// (overflow) lane. Below 40 total players there's nothing left for
+// overflow; below 2*capEach the two primary lanes just split whatever
+// exists as evenly as the cap allows.
+function balanceChampionshipLanes(players, primaryPair) {
+  const primaryKeys = PRIMARY_PAIR_LANES[primaryPair] || PRIMARY_PAIR_LANES.left_right;
+  const overflowKey = LANE_KEYS.find((k) => !primaryKeys.includes(k));
+
+  const sorted = [...players].sort((a, b) => b.power - a.power);
+  const capped = sorted.slice(0, CHAMPIONSHIP_TOTAL_CAP);
+  const primaryPool = capped.slice(0, CHAMPIONSHIP_LANE_CAP * 2);
+  const overflowPool = capped.slice(CHAMPIONSHIP_LANE_CAP * 2);
+
+  const { aIds, bIds } = balanceTwoGroups(primaryPool, CHAMPIONSHIP_LANE_CAP);
+
+  const lanes = { left: [], middle: [], right: [] };
+  lanes[primaryKeys[0]] = aIds;
+  lanes[primaryKeys[1]] = bIds;
+  lanes[overflowKey] = overflowPool.slice(0, CHAMPIONSHIP_LANE_CAP).map((p) => p.id);
+  return lanes;
 }
 
 // Returns { bySection: [{title, points}], total } for a bag submission's values.

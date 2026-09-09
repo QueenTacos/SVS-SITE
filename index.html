@@ -13,6 +13,12 @@
        is filled in. Harmless to load unconfigured (falls back to
        localStorage, same as always). See README.md -> "Going multi-user". -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+
+  <!-- Used only by the Alliance Championship planner's "Upload Screenshots"
+       step, to read player names/power directly off screenshots in the
+       browser (no server involved). Harmless to load if that feature is
+       never used. -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <script src="data.js"></script>
   <script src="app.js"></script>
 </body>

@@ -243,3 +243,11 @@ textarea.feedback-input{ width:100%; background:var(--panel-2); border:1px solid
 .points-row{ display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border); font-size:12.5px; }
 .points-row:last-child{ border-bottom:none; }
 .points-row.total{ font-weight:700; color:var(--accent-purple); border-top:1px solid var(--border); margin-top:4px; padding-top:10px; }
+
+/* Alliance Championship — lane results grid + drag-and-drop drop-zone state */
+.lane-grid{ display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; }
+@media (max-width:760px){ .lane-grid{ grid-template-columns:1fr; } }
+.lane-drop{ min-height:40px; border-radius:4px; transition:background .12s, outline .12s; }
+.lane-drop.dragover{ background:rgba(124,58,237,0.12); outline:2px dashed var(--accent-purple); outline-offset:-2px; }
+.rank-item[draggable="true"]{ cursor:grab; }
+.rank-item.dragging{ opacity:.4; }
