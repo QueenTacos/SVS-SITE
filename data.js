@@ -656,7 +656,7 @@ const PRIMARY_PAIR_LANES = {
 };
 
 const DEFAULT_CHAMPIONSHIP = {
-  players: [], // [{ id, rank: number|null (as OCR'd, informational only), name, power }]
+  players: [], // [{ id, name, power, needsReview: boolean }] — no rank/order-of-battle data is kept, only name + power
   lanes: { left: [], middle: [], right: [] }, // arrays of player ids
   primaryPair: "left_right", // key into PRIMARY_PAIR_LANES — which two lanes get maxed to 20/20
 };
@@ -688,37 +688,97 @@ function formatFullNumber(n) {
   return n.toLocaleString("en-US");
 }
 
-// One line of OCR'd screenshot text -> { rank, name, power } or null. Picks
-// the LAST power-shaped token on the line (name text almost always comes
-// before the power figure in these screenshots), and treats a small
-// leading number (with a separator like ". " or ") " or "#") as the rank.
-function parseChampionshipOcrLine(line) {
-  const tokenRe = /(\d{1,3}(?:,\d{3}){1,4}(?:\.\d+)?|\d+(?:\.\d+)?\s*[KMB]\b|\d{4,})/gi;
-  const matches = [...line.matchAll(tokenRe)];
-  if (!matches.length) return null;
-  const last = matches[matches.length - 1];
-  const power = parsePowerToken(last[0]);
-  // Filter out stray small numbers (dates, percentages, etc.) that happen
-  // to match the pattern but are implausible as an alliance power figure.
-  if (!power || power < 1000) return null;
+// ---------------------------------------------------------------------------
+// Screenshot OCR parsing — tuned to the actual in-game "Order of Battle"
+// list layout (Info -> Left/Middle/Right Lane), NOT a one-row-per-line
+// format. Each player is rendered as its own little card: a rank number OR
+// a "No engagement" label on the left, an avatar, the gamer name, and
+// "Troop Power: N" directly under the name. Tesseract reads that back as
+// several separate text lines per player, e.g.:
+//   No engagement
+//   [YUM]oakleygirl
+//   Troop Power: 1,169
+// Only Gamer Name + Troop Power are extracted and stored — Order of
+// Battle/rank, "No engagement", the lane tabs, "Registered: X/20", the
+// lane's own total "Troop Power: N" line, and every other button/label are
+// deliberately ignored (see CHAMPIONSHIP_OCR_IGNORE_LINE below), and none
+// of that is kept on the player object.
+// ---------------------------------------------------------------------------
 
-  let before = line.slice(0, last.index).trim();
-  let rank = null;
-  const rankMatch = before.match(/^#?(\d{1,3})[.).\s-]+/);
-  if (rankMatch) {
-    rank = parseInt(rankMatch[1], 10);
-    before = before.slice(rankMatch[0].length).trim();
-  }
-  const name = before.replace(/[|_~`]+/g, " ").replace(/\s{2,}/g, " ").trim();
-  if (!name) return null;
-  return { rank, name, power };
+// Lines that are UI chrome, not a player's name — skipped when walking
+// backward from a "Troop Power:" line to find the name above it.
+const CHAMPIONSHIP_OCR_IGNORE_LINE = [
+  /^(left|middle|right)\s*lane/i,
+  /^registered\s*[:.]/i,
+  /^order of battle/i,
+  /^troop power$/i, // the bare column-header word, no colon/number
+  /^no\s*engagement/i,
+  /^info$/i,
+  /^x$/i,
+  /^\d{1,3}$/, // a bare rank number sitting on its own line
+  /preparation phase/i,
+  /alliance leader/i,
+  /r4 members/i,
+  /adjust the lane/i,
+  /view deployment/i,
+  /change lane/i,
+  /team deployment/i,
+];
+
+function isChampionshipOcrJunkLine(line) {
+  const t = (line || "").trim();
+  if (!t) return true;
+  return CHAMPIONSHIP_OCR_IGNORE_LINE.some((re) => re.test(t));
 }
 
+// Matches a "Troop Power: 1,169" (or "TroopPower 185M", minor OCR noise
+// around the colon/spacing) line and captures the numeric part.
+const CHAMPIONSHIP_POWER_LINE_RE = /troop\s*power\s*[:.]?\s*([\d][\d,.\s]*)\s*([kmb])?/i;
+
+// Parses every screenshot's OCR text into { name, power, needsReview } rows
+// — one call per screenshot; combining/deduping across screenshots happens
+// separately in mergeChampionshipImports so overlapping uploads work.
 function parseChampionshipOcrText(text) {
-  return String(text || "")
+  const rawLines = String(text || "")
     .split(/\r?\n/)
-    .map((line) => parseChampionshipOcrLine(line))
-    .filter(Boolean);
+    .map((l) => l.replace(/ /g, " ").trim());
+  const rows = [];
+
+  for (let i = 0; i < rawLines.length; i++) {
+    const line = rawLines[i];
+    const m = CHAMPIONSHIP_POWER_LINE_RE.exec(line);
+    if (!m) continue;
+
+    // The lane's own total ("Registered: 57/20" immediately followed by
+    // "Troop Power: 10,184") is NOT a player — skip it. Real player rows
+    // never sit directly under a "Registered:" line.
+    let prevIdx = i - 1;
+    while (prevIdx >= 0 && rawLines[prevIdx].trim() === "") prevIdx--;
+    if (prevIdx >= 0 && /^registered\s*[:.]/i.test(rawLines[prevIdx])) continue;
+
+    const power = parsePowerToken(m[1] + (m[2] || ""));
+
+    // Walk backward past rank numbers / "No engagement" / blank lines to
+    // find the name line sitting just above this power line.
+    let nameIdx = i - 1;
+    while (nameIdx >= 0 && isChampionshipOcrJunkLine(rawLines[nameIdx])) nameIdx--;
+    let name = nameIdx >= 0 ? rawLines[nameIdx].trim() : "";
+    // If we walked straight into another player's power line without ever
+    // finding a name in between (a name line the OCR dropped entirely),
+    // there's no real name to use here.
+    if (CHAMPIONSHIP_POWER_LINE_RE.test(name)) name = "";
+
+    // Nothing recognized at all (no name AND no usable power) — not worth
+    // a row, there's nothing for the admin to review.
+    if (!name && (power == null || power <= 0)) continue;
+
+    rows.push({
+      name, // may be "" — the review table flags/labels this, never guesses one
+      power: power == null ? 0 : power,
+      needsReview: !name || power == null || power <= 0,
+    });
+  }
+  return rows;
 }
 
 // Splits `items` (each { id, power }, any order) into two groups, each

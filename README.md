@@ -232,31 +232,63 @@ SCHEDULE and Admin — officers and regular members see a "leadership only"
 message instead) for splitting the Alliance Championship roster into three
 balanced lanes. It's a completely separate data set from everything else on
 the site: its own `Store.championship` key, its own roster of "players"
-(name + power, optionally an OCR'd rank) that has nothing to do with member
-accounts, logins, PINs, or bag data. Clearing or editing it never touches
-`Store.members`, `Store.bagSubmissions`, `Store.bagDrafts`, or
+(just a Gamer Name and a Troop Power — nothing else) that has nothing to do
+with member accounts, logins, PINs, or bag data. Clearing or editing it
+never touches `Store.members`, `Store.bagSubmissions`, `Store.bagDrafts`, or
 `Store.schedule`, and vice versa.
 
 The workflow matches the four steps on the page, top to bottom:
 
-1. **Upload Screenshots** — pick one or more screenshots of the Alliance
-   Championship rankings and hit **Process Screenshots**. This reads the
-   images entirely in the browser using [Tesseract.js](https://github.com/naptha/tesseract.js)
-   (loaded from a CDN in `index.html`, right alongside the optional
-   Supabase script — harmless if it fails to load, e.g. offline) — nothing
-   is uploaded anywhere. Each line of recognized text is checked for a
-   trailing power value (handles `185,000,000`, `185M`, `185.4M`, `1.2B`,
-   and bare numbers) and, if found, whatever's left of the line becomes the
-   player name, with a leading `#12` or `12.` picked off as the rank if
-   present. Players already on the list (matched by name, case-insensitive)
-   are skipped, so uploading a few overlapping screenshots of the same
-   leaderboard never creates duplicates.
+1. **Upload Screenshots** — pick one or more screenshots of the in-game
+   "Order of Battle" lane list (Info → Left/Middle/Right Lane) and hit
+   **Process Screenshots**. This reads the images entirely in the browser
+   using [Tesseract.js](https://github.com/naptha/tesseract.js) (loaded from
+   a CDN in `index.html`, right alongside the optional Supabase script —
+   harmless if it fails to load, e.g. offline) — nothing is uploaded
+   anywhere. Screenshots can be uploaded in any order, can overlap (the same
+   scrolling list shot several times), and are all processed together as
+   one combined player list.
+
+   Only **Gamer Name** and **Troop Power** are ever extracted or stored.
+   Each player renders in-game as its own little card — a rank number or a
+   "No engagement" label, then the name, then a "Troop Power: N" line
+   directly underneath — so the parser looks for every "Troop Power: N"
+   line as an anchor and walks upward past known UI chrome (rank numbers,
+   "No engagement", the Left/Middle/Right Lane tabs, "Registered: X/20",
+   the "Order of Battle" header, Preparation Phase instructions, and
+   similar) to find the name sitting just above it. The lane's own overall
+   total — a "Troop Power: N" line that immediately follows a
+   "Registered:" line — is recognized as chrome, not a player, and skipped.
+   Order of Battle position/rank, engagement status, avatars, lane names,
+   and registered/total counts are never stored on a player, even though
+   they appear on screen. Gamer names are kept exactly as recognized —
+   symbols, accents, and non-Latin scripts (Korean, Arabic, etc.) are never
+   translated or simplified.
+
+   A player can appear on more than one screenshot — most obviously a
+   "selected player" card that stays fixed at the bottom of the list while
+   scrolling — so duplicates are removed after combining every screenshot's
+   results: matching is primarily by Gamer Name (case-insensitive), with
+   Troop Power only as a secondary signal, never as the sole match — two
+   different players are never merged just because they happen to share a
+   power value. A row where the OCR couldn't recognize a name or a usable
+   power at all is flagged **Needs Review** rather than guessed at, and is
+   never auto-matched against another unnamed row (each is kept as its own
+   entry until an admin fills it in). Once combined and de-duplicated, the
+   list is sorted by Troop Power, highest to lowest — upload order doesn't
+   matter. A stats strip above the table reports **Screenshots Processed**,
+   **Unique Players Found**, **Duplicates Removed**, and **Needs Review**
+   for the current session.
 2. **Player list — review & correct** — every imported (or manually added)
-   player shows up in an editable table, sorted strongest-to-weakest. Admins
-   can fix a misread name or power value directly in the row (power accepts
-   the same `185M` / `1.2B` shorthand as the OCR step), delete a bad
-   read, or use **+ Add Player** to type someone in by hand — useful for
-   anyone the OCR missed entirely, or for skipping screenshots altogether.
+   player shows up in an editable table (Gamer Name, Troop Power, Status),
+   sorted strongest-to-weakest. A row shows a **NEEDS REVIEW** badge until
+   both its name and power are valid, and **CONFIRMED** once they are —
+   editing either field re-checks it live, so fixing a flagged row clears
+   the badge immediately. Admins can fix a misread name or power value
+   directly in the row (power accepts the same `185M` / `1.2B` shorthand as
+   the OCR step), delete a bad read, or use **+ Add Player** to type someone
+   in by hand — useful for anyone the OCR missed entirely, or for skipping
+   screenshots altogether.
 3. **Primary lanes + Balance Lanes** — pick which two lanes (Left+Right,
    Left+Middle, or Middle+Right — Left+Right is the default) get filled to
    a maxed 20/20 using the strongest players, then click **Balance Lanes**.

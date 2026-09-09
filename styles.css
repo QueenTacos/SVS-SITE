@@ -245,6 +245,8 @@ textarea.feedback-input{ width:100%; background:var(--panel-2); border:1px solid
 .points-row.total{ font-weight:700; color:var(--accent-purple); border-top:1px solid var(--border); margin-top:4px; padding-top:10px; }
 
 /* Alliance Championship — lane results grid + drag-and-drop drop-zone state */
+.champ-stat-row{ display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; }
+@media (max-width:600px){ .champ-stat-row{ grid-template-columns:repeat(2, 1fr); } }
 .lane-grid{ display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; }
 @media (max-width:760px){ .lane-grid{ grid-template-columns:1fr; } }
 .lane-drop{ min-height:40px; border-radius:4px; transition:background .12s, outline .12s; }

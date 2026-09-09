@@ -2560,6 +2560,11 @@ let champDirty = false; // true once champWorking differs from the last-saved St
 let champOcrBusy = false;
 let champOcrStatus = "";
 let champDragId = null; // id of the player currently mid-drag
+// Session-only import stats (not part of Store.championship — purely
+// informational about what's happened in this working session) — reset by
+// Clear Championship Plan, or naturally on a full page reload.
+let champScreenshotsProcessed = 0;
+let champDuplicatesRemoved = 0;
 
 function ensureChampWorking() {
   if (!champWorking) {
@@ -2599,22 +2604,45 @@ function newChampPlayerId() {
   return "cp_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-// Merges freshly-OCR'd (or manually typed) rows into the working roster,
-// skipping anyone already on the list (case-insensitive name match) so
-// re-uploading an overlapping screenshot never creates a duplicate. Returns
-// how many NEW players were added.
+// Merges one screenshot's parsed rows (from parseChampionshipOcrText in
+// data.js — each { name, power, needsReview }) into the working roster.
+// Duplicate detection is primarily by Gamer Name (case-insensitive, exact
+// text otherwise — full Unicode names are never simplified), which is what
+// catches the same player appearing across overlapping screenshots (and
+// the fixed "selected player" card that can sit at the bottom of every
+// screenshot while scrolling). Power is not part of the dedupe key — two
+// different players can share a power value — but a row with NO usable
+// name at all (OCR dropped it) is never deduped against another nameless
+// row, since there's no way to tell whether they're the same person; it's
+// always added as its own "Needs Review" entry instead. Returns
+// { added, duplicates } so the caller can report accurate import stats.
 function mergeChampionshipImports(found) {
-  const existingNames = new Set(champWorking.players.map((p) => p.name.trim().toLowerCase()));
+  const existingKeys = new Set(
+    champWorking.players.filter((p) => p.name && p.name.trim()).map((p) => p.name.trim().toLowerCase())
+  );
+  const seenThisBatch = new Set();
   let added = 0;
+  let duplicates = 0;
   found.forEach((f) => {
     const key = (f.name || "").trim().toLowerCase();
-    if (!key || existingNames.has(key)) return;
-    existingNames.add(key);
-    champWorking.players.push({ id: newChampPlayerId(), rank: f.rank ?? null, name: f.name.trim(), power: f.power });
+    if (key) {
+      if (existingKeys.has(key) || seenThisBatch.has(key)) {
+        duplicates++;
+        return;
+      }
+      seenThisBatch.add(key);
+      existingKeys.add(key);
+    }
+    champWorking.players.push({
+      id: newChampPlayerId(),
+      name: f.name ? f.name.trim() : "",
+      power: f.power || 0,
+      needsReview: !!f.needsReview,
+    });
     added++;
   });
   if (added) champDirty = true;
-  return added;
+  return { added, duplicates };
 }
 
 // Moves a player into targetLane (one of LANE_KEYS), or out to "unassigned"
@@ -2655,11 +2683,12 @@ function deleteChampionshipPlayer(id) {
 
 function championshipPlayerRowHtml(p) {
   if (!p) return "";
+  const displayName = p.name && p.name.trim() ? escapeHtml(p.name) : "(unrecognized name)";
   return `
     <div class="rank-item" draggable="true" data-cpid="${p.id}">
       <div class="left">
-        <span class="name">${escapeHtml(p.name)}</span>
-        ${p.rank != null ? `<span class="desc">Screenshot rank #${p.rank}</span>` : ""}
+        <span class="name">${displayName}</span>
+        ${p.needsReview ? `<span class="desc" style="color:var(--accent-amber);">⚠ needs review</span>` : ""}
       </div>
       <span class="score">${formatFullNumber(p.power)}</span>
     </div>
@@ -2738,23 +2767,44 @@ function renderChampionship(el) {
         <button class="btn primary small" id="champProcess" ${champOcrBusy ? "disabled" : ""}>${champOcrBusy ? "Processing…" : "Process Screenshots"}</button>
       </div>
       ${champOcrStatus ? `<p style="font-size:11.5px;color:var(--text-faint);margin:10px 0 0;">${escapeHtml(champOcrStatus)}</p>` : ""}
+      ${
+        champScreenshotsProcessed > 0 || w.players.length > 0
+          ? `<div class="champ-stat-row" style="margin-top:12px;">
+              ${[
+                ["SCREENSHOTS PROCESSED", champScreenshotsProcessed],
+                ["UNIQUE PLAYERS FOUND", w.players.length],
+                ["DUPLICATES REMOVED", champDuplicatesRemoved],
+                ["NEEDS REVIEW", w.players.filter((p) => p.needsReview).length],
+              ]
+                .map(
+                  ([label, val]) => `
+                <div style="background:var(--panel-2);border:1px solid var(--border);border-radius:4px;padding:8px 10px;text-align:center;">
+                  <div style="font-size:9.5px;color:var(--text-faint);letter-spacing:.5px;">${label}</div>
+                  <div style="font-size:16px;font-weight:700;margin-top:2px;${label === "NEEDS REVIEW" && val > 0 ? "color:var(--accent-amber);" : ""}">${val}</div>
+                </div>`
+                )
+                .join("")}
+            </div>`
+          : ""
+      }
     </div>
 
     <div class="section-title">PLAYER LIST — REVIEW &amp; CORRECT</div>
     <div class="panel">
+      <p style="font-size:12px;color:var(--text-dim);margin:0 0 12px;">Only Gamer Name and Troop Power are imported from screenshots — Order of Battle position, avatars, and everything else on the screen are ignored. Rows the OCR wasn't confident about are marked <strong style="color:var(--accent-amber);">Needs Review</strong> below — fix the name or power directly in the row rather than guessing; a row stays flagged until both are filled in.</p>
       ${
         sortedPlayers.length
           ? `<div style="overflow-x:auto;">
               <table>
-                <thead><tr><th>RANK</th><th>PLAYER</th><th>POWER</th><th></th></tr></thead>
+                <thead><tr><th>GAMER NAME</th><th>TROOP POWER</th><th>STATUS</th><th></th></tr></thead>
                 <tbody>
                   ${sortedPlayers
                     .map(
-                      (p, i) => `
+                      (p) => `
                     <tr>
-                      <td>#${i + 1}</td>
-                      <td><input type="text" data-cpname="${p.id}" value="${escapeHtml(p.name)}" style="width:100%;min-width:120px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-size:12.5px;" /></td>
-                      <td><input type="text" inputmode="decimal" data-cppower="${p.id}" value="${formatFullNumber(p.power)}" style="width:100%;min-width:110px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-size:12.5px;" /></td>
+                      <td><input type="text" data-cpname="${p.id}" value="${escapeHtml(p.name || "")}" placeholder="(unrecognized name)" style="width:100%;min-width:140px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-size:12.5px;" /></td>
+                      <td><input type="text" inputmode="decimal" data-cppower="${p.id}" value="${p.power ? formatFullNumber(p.power) : ""}" placeholder="0" style="width:100%;min-width:110px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-size:12.5px;" /></td>
+                      <td>${p.needsReview ? `<span class="status-badge planned">NEEDS REVIEW</span>` : `<span class="status-badge done">CONFIRMED</span>`}</td>
                       <td><button class="btn small" data-cpdel="${p.id}" style="color:var(--accent-red);">delete</button></td>
                     </tr>`
                     )
@@ -2829,14 +2879,19 @@ function wireChampionshipHandlers(el) {
     champOcrStatus = `Reading ${files.length} screenshot${files.length === 1 ? "" : "s"}…`;
     renderChampionship(el);
     let totalAdded = 0;
+    let totalDuplicates = 0;
     try {
       for (let i = 0; i < files.length; i++) {
         champOcrStatus = `Reading screenshot ${i + 1} of ${files.length}…`;
         const { data } = await Tesseract.recognize(files[i], "eng");
         const found = parseChampionshipOcrText(data.text);
-        totalAdded += mergeChampionshipImports(found);
+        const { added, duplicates } = mergeChampionshipImports(found);
+        totalAdded += added;
+        totalDuplicates += duplicates;
       }
-      champOcrStatus = `Done — added ${totalAdded} new player${totalAdded === 1 ? "" : "s"} from ${files.length} screenshot${files.length === 1 ? "" : "s"}. Review the list below before balancing.`;
+      champScreenshotsProcessed += files.length;
+      champDuplicatesRemoved += totalDuplicates;
+      champOcrStatus = `Done — added ${totalAdded} new player${totalAdded === 1 ? "" : "s"} (${totalDuplicates} duplicate${totalDuplicates === 1 ? "" : "s"} skipped) from ${files.length} screenshot${files.length === 1 ? "" : "s"}. Review the list below before balancing.`;
     } catch (err) {
       console.error("Championship OCR failed:", err);
       champOcrStatus = "Couldn't read one of those screenshots — try a clearer image, or add players manually below.";
@@ -2846,15 +2901,22 @@ function wireChampionshipHandlers(el) {
   });
 
   el.querySelector("#champAddPlayer")?.addEventListener("click", () => {
-    champWorking.players.push({ id: newChampPlayerId(), rank: null, name: "New Player", power: 0 });
+    champWorking.players.push({ id: newChampPlayerId(), name: "New Player", power: 0, needsReview: false });
     champDirty = true;
     renderChampionship(el);
   });
 
+  // Editing name/power on a flagged row clears "Needs Review" the moment
+  // both fields hold something usable — the admin fixing the row IS the
+  // review, no separate "confirm" action needed.
   el.querySelectorAll("[data-cpname]").forEach((inp) =>
     inp.addEventListener("change", () => {
       const p = champPlayerById(inp.dataset.cpname);
-      if (p) { p.name = inp.value.trim() || p.name; champDirty = true; }
+      if (p) {
+        p.name = inp.value.trim();
+        p.needsReview = !p.name || !p.power || p.power <= 0;
+        champDirty = true;
+      }
       renderChampionship(el);
     })
   );
@@ -2862,7 +2924,11 @@ function wireChampionshipHandlers(el) {
     inp.addEventListener("change", () => {
       const p = champPlayerById(inp.dataset.cppower);
       const parsed = parsePowerToken(inp.value);
-      if (p && parsed != null) { p.power = parsed; champDirty = true; }
+      if (p && parsed != null) {
+        p.power = parsed;
+        p.needsReview = !p.name || !p.power || p.power <= 0;
+        champDirty = true;
+      }
       renderChampionship(el);
     })
   );
@@ -2947,6 +3013,8 @@ function wireChampionshipHandlers(el) {
     champWorking = null; // force ensureChampWorking() to reload the fresh empty state
     champDirty = false;
     champOcrStatus = "";
+    champScreenshotsProcessed = 0;
+    champDuplicatesRemoved = 0;
     renderChampionship(el);
   });
 }
