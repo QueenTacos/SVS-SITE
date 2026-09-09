@@ -40,11 +40,15 @@ const PERMANENT_ADMIN_MEMBER = {
 // Roster — replace with your real alliance & player names, or manage this
 // from the Admin page once the app is running. gamerId is the in-game
 // numeric player ID (shown as their profile ID in Whiteout Survival),
-// separate from the display name used to sign in.
+// separate from the display name used to sign in. Sign-in requires an
+// exact PIN match (see app.js openSignIn) with no "claim on first login"
+// fallback, so these placeholder accounts need a seed PIN to be usable —
+// swap these for real PINs (or replace the accounts entirely) before
+// sharing this with your alliance.
 const SEED_MEMBERS = [
-  { id: "m1", name: "Chief Falcon", gamerId: "10293847", alliance: "STK", role: "admin" },
-  { id: "m2", name: "Nightshade", gamerId: "58201934", alliance: "STK", role: "officer" },
-  { id: "m3", name: "IronWolf", gamerId: "74920185", alliance: "SUN", role: "member" },
+  { id: "m1", name: "Chief Falcon", gamerId: "10293847", alliance: "SUN", role: "admin", pin: "1111" },
+  { id: "m2", name: "Nightshade", gamerId: "58201934", alliance: "SYP", role: "officer", pin: "2222" },
+  { id: "m3", name: "IronWolf", gamerId: "74920185", alliance: "LIT", role: "member", pin: "3333" },
   PERMANENT_ADMIN_MEMBER,
 ];
 
@@ -68,7 +72,7 @@ function ensurePermanentAdmin(members) {
 
 // Alliance tags — managed from Admin → Alliances (add/remove). Members pick
 // their alliance from this list.
-const SEED_ALLIANCES = ["STK", "SUN", "YUM"];
+const SEED_ALLIANCES = ["SUN", "SYP", "LIT", "NEM"];
 
 // Furnace bracket options for the backpack form's "current furnace level"
 // field — managed from Admin → Furnace brackets (add/remove).

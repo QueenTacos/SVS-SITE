@@ -46,9 +46,14 @@ page once the app is running:
 
 - `DEFAULT_STATE` — your state number, rival state number, next SvS date
   (also editable from Admin → State config).
-- `SEED_MEMBERS` — your roster, in-game `gamerId`, alliance, and role (also
-  editable from Admin → Members: USER NAME, GAMER ID, ALLIANCE, RESET PIN,
-  RANK columns). Roles are `member`, `officer`, or `admin` in the data —
+- `SEED_MEMBERS` — your roster, in-game `gamerId`, alliance, role, and `pin`
+  (also editable from Admin → Members: USER NAME, GAMER ID, ALLIANCE,
+  RESET PIN, RANK columns — PIN itself isn't a column there, since only the
+  member or an admin should ever see/set it; see "Sign-in" below). Every
+  seeded account needs a `pin` here or nobody can sign in as them — the
+  placeholder roster ships with `1111`/`2222`/`3333` for its three members,
+  which you'll want to change before sharing the site. Roles are `member`,
+  `officer`, or `admin` in the data —
   the RANK column and role dropdown display `officer` as **R4** everywhere
   in the UI (matching the alliance-rank naming the game itself uses), but
   the stored value stays `officer`, so nothing else in this doc or the
@@ -477,14 +482,35 @@ you need to make changes before members see them again.
 
 ## Sign-in
 
-Sign-in is chief name + a 4-digit PIN, stored in `localStorage` on each
-member record. Nobody sets PINs up front — the first time a name signs in
-with a PIN, that PIN is "claimed" and required on every login after that.
-Typing an unrecognized name still creates a new member (like before), and
-that first PIN becomes theirs too. An admin can force a re-claim by
-clicking **Reset PIN** next to a member in Admin → Members, which clears
-their PIN (and signs them out if it was their own) so they set a fresh one
-next time.
+Sign-in requires an existing account plus its exact 4-digit PIN — there's
+no way in without one, and no "type any PIN to claim this account"
+fallback, so a member's bag data can't be reached by guessing or typing
+someone else's name. The sign-in modal has two tabs:
+
+- **Existing Member** — sign in with your chief name *or* Gamer ID, plus
+  your PIN. Both must match a real account exactly; an unrecognized
+  name/ID or a wrong PIN is rejected with an error, not silently let
+  through.
+- **New Member** — for anyone without an account yet: enter your Gamer
+  Name, Alliance Tag, Gamer ID, and create a 4-digit PIN. That PIN is
+  required on every login from then on. Blocked if the name or Gamer ID
+  is already taken (you're pointed at "Existing Member" instead).
+
+A member can also be added directly from Admin → Members ("Add member"),
+which now also requires a 4-digit PIN at creation time — same reasoning:
+an account with no PIN set has no way to be signed into. An admin can set
+or replace a member's PIN at any time with **Reset PIN** next to them in
+Admin → Members — it prompts the admin for the new 4-digit PIN and applies
+it immediately (share it with the real member out of band); if that member
+was already signed in, they're signed out so they re-authenticate with the
+new PIN.
+
+Because signing in requires the account owner's real PIN, and MY BAG /
+MY SUBMISSION / MY POINTS all read `Store.bagSubmissions[Store.currentUser.id]`
+— never another member's id — a member only ever sees their own bag data
+once signed in. Viewing or editing *another* member's bag from Admin →
+Members → Edit Bag is still possible, but only for the `admin` role (not
+`officer`/R4), same as before.
 
 **Home is public** — anyone can view it without signing in. SvS prep is
 fully behind the login wall: a logged-out visitor gets a single "sign in

@@ -126,10 +126,14 @@ window.addEventListener("DOMContentLoaded", () => {
 // ---------------------------------------------------------------------------
 // Sign-in modal (local identity only — see README for real auth)
 // ---------------------------------------------------------------------------
-// Sign-in is username + a 4-digit PIN. A member with no PIN set yet (brand
-// new, or an admin cleared it) "claims" whatever PIN they type on that
-// first login and it becomes their PIN from then on. An existing member
-// with a PIN set must match it exactly.
+// Sign-in requires an existing account (matched by chief name OR Gamer ID)
+// plus its exact 4-digit PIN — there's no "type any PIN to claim this
+// account" fallback, so a member's data can't be reached by guessing a
+// name that happens to belong to someone else. A brand-new member instead
+// uses the "New Member" tab to create their own account (Gamer Name,
+// Alliance Tag, Gamer ID, PIN) up front. An account with no PIN set (e.g.
+// one an admin added without setting one) simply can't sign in until an
+// admin sets a PIN for it from Admin → Members → Reset PIN.
 function openSignIn() {
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
@@ -137,43 +141,67 @@ function openSignIn() {
     <div class="modal">
       <button class="close">&times;</button>
       <h3>Sign in</h3>
-      <p style="color:var(--text-dim);font-size:12px;margin-top:-6px;">Chief name + your 4-digit PIN. First time signing in? Pick any 4-digit PIN — it becomes your login from then on.</p>
-      <input id="siName" placeholder="Type your chief name..." list="memberList" />
-      <datalist id="memberList">
-        ${Store.members.map((m) => `<option value="${m.name}">`).join("")}
-      </datalist>
-      <input id="siPin" placeholder="4-digit PIN..." inputmode="numeric" maxlength="4" style="margin-top:8px;letter-spacing:.3em;" />
-      <div id="siErr" style="color:var(--accent-red);font-size:11.5px;margin-top:6px;min-height:14px;"></div>
-      <button class="btn primary" id="siGo" style="width:100%;margin-top:4px;">Continue</button>
+      <div class="tabs" style="margin-bottom:2px;">
+        <button data-authtab="login" class="active">Existing Member</button>
+        <button data-authtab="signup">New Member</button>
+      </div>
+      <div id="authPane"></div>
     </div>
   `;
   document.body.appendChild(overlay);
   overlay.querySelector(".close").onclick = () => overlay.remove();
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-  const errEl = overlay.querySelector("#siErr");
-  const pinInput = overlay.querySelector("#siPin");
+
+  const pane = overlay.querySelector("#authPane");
+  const tabBtns = overlay.querySelectorAll("[data-authtab]");
+  const showTab = (tab) => {
+    tabBtns.forEach((b) => b.classList.toggle("active", b.dataset.authtab === tab));
+    if (tab === "signup") renderSignUpPane(pane, overlay);
+    else renderLoginPane(pane, overlay);
+  };
+  tabBtns.forEach((b) => b.addEventListener("click", () => showTab(b.dataset.authtab)));
+  showTab("login");
+}
+
+function renderLoginPane(pane, overlay) {
+  pane.innerHTML = `
+    <p style="color:var(--text-dim);font-size:12px;margin-top:8px;">Sign in with your chief name or Gamer ID, plus your 4-digit PIN.</p>
+    <input id="siName" placeholder="Chief name or Gamer ID..." list="memberList" />
+    <datalist id="memberList">
+      ${Store.members.map((m) => `<option value="${m.name}">`).join("")}
+    </datalist>
+    <input id="siPin" placeholder="4-digit PIN..." inputmode="numeric" maxlength="4" style="letter-spacing:.3em;" />
+    <div id="siErr" style="color:var(--accent-red);font-size:11.5px;margin-top:-4px;min-height:28px;"></div>
+    <button class="btn primary" id="siGo" style="width:100%;">Sign in</button>
+  `;
+  const errEl = pane.querySelector("#siErr");
+  const pinInput = pane.querySelector("#siPin");
   pinInput.addEventListener("input", () => {
     pinInput.value = pinInput.value.replace(/\D/g, "").slice(0, 4);
   });
   const go = () => {
-    const name = overlay.querySelector("#siName").value.trim();
+    const idOrName = pane.querySelector("#siName").value.trim();
     const pin = pinInput.value.trim();
     errEl.textContent = "";
-    if (!name) { errEl.textContent = "Enter your chief name."; return; }
+    if (!idOrName) { errEl.textContent = "Enter your chief name or Gamer ID."; return; }
     if (!/^\d{4}$/.test(pin)) { errEl.textContent = "PIN must be exactly 4 digits."; return; }
 
     const members = Store.members;
-    let member = members.find((m) => m.name.toLowerCase() === name.toLowerCase());
+    const member = members.find(
+      (m) =>
+        m.name.toLowerCase() === idOrName.toLowerCase() ||
+        (m.gamerId && m.gamerId.toLowerCase() === idOrName.toLowerCase())
+    );
 
     if (!member) {
-      // New chief name — create the member and claim this PIN as theirs.
-      member = { id: "m" + Date.now(), name, gamerId: "", alliance: "—", role: "member", pin };
-      Store.members = [...members, member];
-    } else if (!member.pin) {
-      // Existing member, no PIN claimed yet — this login sets it.
-      member.pin = pin;
-      Store.members = members;
-    } else if (member.pin !== pin) {
+      errEl.textContent = 'No account found with that name or Gamer ID. Use "New Member" above to create one.';
+      return;
+    }
+    if (!member.pin) {
+      errEl.textContent = "This account doesn't have a PIN set yet — ask an admin to set one from Admin → Members.";
+      return;
+    }
+    if (member.pin !== pin) {
       errEl.textContent = "Incorrect PIN.";
       return;
     }
@@ -183,7 +211,52 @@ function openSignIn() {
     renderShell();
     router();
   };
-  overlay.querySelector("#siGo").onclick = go;
+  pane.querySelector("#siGo").onclick = go;
+  pinInput.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+}
+
+function renderSignUpPane(pane, overlay) {
+  pane.innerHTML = `
+    <p style="color:var(--text-dim);font-size:12px;margin-top:8px;">Create your account — this PIN will be required on every future sign-in.</p>
+    <input id="suName" placeholder="Gamer name..." />
+    <input id="suAlliance" placeholder="Alliance tag (e.g. SYP)..." />
+    <input id="suGamerId" placeholder="Gamer ID..." />
+    <input id="suPin" placeholder="Create a 4-digit PIN..." inputmode="numeric" maxlength="4" style="letter-spacing:.3em;" />
+    <div id="suErr" style="color:var(--accent-red);font-size:11.5px;margin-top:-4px;min-height:28px;"></div>
+    <button class="btn primary" id="suGo" style="width:100%;">Create account</button>
+  `;
+  const errEl = pane.querySelector("#suErr");
+  const pinInput = pane.querySelector("#suPin");
+  pinInput.addEventListener("input", () => {
+    pinInput.value = pinInput.value.replace(/\D/g, "").slice(0, 4);
+  });
+  const go = () => {
+    const name = pane.querySelector("#suName").value.trim();
+    const alliance = pane.querySelector("#suAlliance").value.trim();
+    const gamerId = pane.querySelector("#suGamerId").value.trim();
+    const pin = pinInput.value.trim();
+    errEl.textContent = "";
+    if (!name) { errEl.textContent = "Enter your gamer name."; return; }
+    if (!alliance) { errEl.textContent = "Enter your alliance tag."; return; }
+    if (!gamerId) { errEl.textContent = "Enter your Gamer ID."; return; }
+    if (!/^\d{4}$/.test(pin)) { errEl.textContent = "PIN must be exactly 4 digits."; return; }
+
+    const members = Store.members;
+    const nameTaken = members.some((m) => m.name.toLowerCase() === name.toLowerCase());
+    const idTaken = members.some((m) => m.gamerId && m.gamerId.toLowerCase() === gamerId.toLowerCase());
+    if (nameTaken || idTaken) {
+      errEl.textContent = 'An account with that name or Gamer ID already exists — use "Existing Member" to sign in instead.';
+      return;
+    }
+
+    const member = { id: "m" + Date.now(), name, gamerId, alliance, role: "member", pin };
+    Store.members = [...members, member];
+    Store.currentUser = member;
+    overlay.remove();
+    renderShell();
+    router();
+  };
+  pane.querySelector("#suGo").onclick = go;
   pinInput.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
 }
 
@@ -1952,7 +2025,7 @@ function renderAdmin(el) {
         }
       </div>
       <div style="display:flex;gap:8px;">
-        <input id="admNewAlliance" placeholder="New alliance tag (e.g. STK)..." style="flex:1;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
+        <input id="admNewAlliance" placeholder="New alliance tag (e.g. SYP)..." style="flex:1;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
         <button class="btn small primary" id="admAddAlliance">Add alliance</button>
       </div>
     </div>
@@ -1961,7 +2034,7 @@ function renderAdmin(el) {
 
     <div class="panel">
       <div class="planner-header"><strong>Members (${members.length}${officerScoped ? ` / ${allMembers.length}` : ""})</strong></div>
-      <p style="font-size:11.5px;color:var(--text-dim);margin-top:-6px;">Members set their own PIN the first time they sign in. Reset PIN clears it so they can claim a new one on their next login.</p>
+      <p style="font-size:11.5px;color:var(--text-dim);margin-top:-6px;">New members create their own PIN via "New Member" on the sign-in screen. Reset PIN lets you set a member's PIN directly (e.g. if they're locked out) — they'll need that exact PIN on their next sign-in.</p>
       ${
         officerScoped
           ? `<p style="font-size:11.5px;color:var(--accent-amber);margin-top:-4px;">Showing ${escapeHtml(user.alliance || "your alliance")} only — R4s see their own alliance's roster, not the whole state.</p>`
@@ -2019,6 +2092,7 @@ function renderAdmin(el) {
       <div style="display:flex;gap:8px;margin-top:10px;">
         <input id="admNewMember" placeholder="New member name..." style="flex:1;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
         <input id="admNewGamerId" placeholder="Gamer ID (optional)..." style="width:150px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
+        <input id="admNewPin" placeholder="4-digit PIN..." inputmode="numeric" maxlength="4" style="width:110px;letter-spacing:.2em;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
         <button class="btn small primary" id="admAddMember">Add member</button>
       </div>
     </div>
@@ -2255,14 +2329,21 @@ function renderAdmin(el) {
       const m = Store.members;
       const idx = m.findIndex((mm) => mm.id === id);
       if (idx === -1) return;
-      delete m[idx].pin;
+      // The admin sets the new PIN directly (rather than clearing it for
+      // anyone to claim on the next login) — that would let anyone who
+      // knows this member's name sign in as them before the real member
+      // gets a chance to. Give the new PIN to the actual member out of band.
+      const newPin = (prompt(`Set a new 4-digit PIN for ${m[idx].name}:`) || "").trim();
+      if (!newPin) return; // cancelled
+      if (!/^\d{4}$/.test(newPin)) {
+        alert("PIN must be exactly 4 digits.");
+        return;
+      }
+      m[idx].pin = newPin;
       Store.members = m;
       if (Store.currentUser && Store.currentUser.id === id) {
-        // Their own PIN was just cleared — sign them out so they have to
-        // claim a fresh one. renderShell() swaps in a fresh <main id="app">,
-        // so re-render via router() (which lands on the "not an admin"
-        // gate now that they're signed out) instead of writing into the
-        // old, now-detached node.
+        // Sign them out so they re-authenticate with the PIN just set,
+        // rather than continuing on a stale in-memory session.
         Store.currentUser = null;
         renderShell();
         router();
@@ -2271,15 +2352,23 @@ function renderAdmin(el) {
       renderAdmin(el);
     })
   );
+  el.querySelector("#admNewPin")?.addEventListener("input", (e) => {
+    e.target.value = e.target.value.replace(/\D/g, "").slice(0, 4);
+  });
   el.querySelector("#admAddMember").onclick = () => {
     const name = el.querySelector("#admNewMember").value.trim();
     const gamerId = el.querySelector("#admNewGamerId").value.trim();
+    const pin = el.querySelector("#admNewPin").value.trim();
     if (!name) return;
+    if (!/^\d{4}$/.test(pin)) {
+      alert("Enter a 4-digit PIN for this member so they can sign in.");
+      return;
+    }
     // Officers only ever see their own alliance here, so a member they add
     // needs that alliance from the start — otherwise it'd default blank and
     // immediately vanish from their filtered table.
     const alliance = officerScoped ? user.alliance || "" : "";
-    Store.members = [...Store.members, { id: "m" + Date.now(), name, gamerId, alliance, role: "member" }];
+    Store.members = [...Store.members, { id: "m" + Date.now(), name, gamerId, alliance, role: "member", pin }];
     renderAdmin(el);
   };
   el.querySelector("#admClearSlots")?.addEventListener("click", () => {
