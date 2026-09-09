@@ -234,14 +234,12 @@ const BAG_SECTIONS = [
       { key: "d2_hero_rare_shards", label: "Rare Hero Shards", rateNote: "350 pts per shard", points: 350 },
       { key: "d2_hero_epic_shards", label: "Epic Hero Shards", rateNote: "1,220 pts per shard", points: 1220 },
       { key: "d2_hero_mythic_shards", label: "Mythic Hero Shards", rateNote: "3,040 pts per shard", points: 3040 },
-      { key: "d2_lucky_wheels", label: "Total Gems (Lucky Wheel)", rateNote: "1,500 gems = 1 spin · 13,500 gems = 10 spins · 8,000 pts/spin · +1 free spin/day for 3 days (10-spin bundle is 12,000 gems when your free spin is still banked)", calc: luckyWheelPoints, gemsCalc: true },
     ],
   },
   {
     title: "D3 — BEAST SLAY",
     fields: [
       { key: "d3_stamina_cans", label: "Stamina Cans (1 can = 10 stamina)", rateNote: "12,000 pts per can — regular beasts cost 10 stamina each, top-tier (Lv.26-30) rate", points: 12000, staminaCalc: true },
-      { key: "d3_pet_advancement", label: "Pet Advancement Score +1", rateNote: "50 pts per point", points: 50 },
       { key: "d3_lucky_wheels", label: "Total Gems (Lucky Wheel)", rateNote: "1,500 gems = 1 spin · 13,500 gems = 10 spins · 8,000 pts/spin · +1 free spin/day for 3 days (10-spin bundle is 12,000 gems when your free spin is still banked)", calc: luckyWheelPoints, gemsCalc: true },
     ],
   },

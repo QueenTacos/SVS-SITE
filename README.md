@@ -86,12 +86,13 @@ page once the app is running:
   top-tier Lv.26-30 beasts — the real per-tier table is
   9,000/9,750/10,500/11,250/12,000 for Lv.1-10/11-15/16-20/21-25/26-30,
   but there's only one Stamina Cans field to enter against, so it always
-  uses the top-tier rate), Polar Terror rallies 30,000 each, Pet
-  Advancement +1 = 50, Troop Day scores promotion potential (see below),
-  Wild Marks 15,000/1,150 (Adv/Common), Mithril 144,000, Hero Gear
-  Essence Stones 4,000, Hero Exclusive Gear Widgets 8,000. (The old
-  "Chief Gear +1" field was removed entirely — D5/Hero Power no longer
-  has a Chief Gear input.)
+  uses the top-tier rate), Polar Terror rallies 30,000 each, Troop Day
+  scores promotion potential (see below), Wild Marks 15,000/1,150
+  (Adv/Common), Mithril 144,000, Hero Gear Essence Stones 4,000, Hero
+  Exclusive Gear Widgets 8,000. (The old "Chief Gear +1" field was removed
+  entirely — D5/Hero Power no longer has a Chief Gear input — and the old
+  "Pet Advancement Score +1" field was removed entirely too — D3/Beast
+  Slay no longer has a Pet Advancement input.)
   Gem-based speedups are excluded from scoring entirely, same as the
   in-game rules. Gathering (Meat/Wood/Coal/Iron) doesn't have its own bag
   field currently — there's nowhere in the form to enter gathered
@@ -146,8 +147,10 @@ page once the app is running:
   section's points (plus the grand total) across whichever members are
   visible — the full roster for `admin`, just their own alliance for a
   scoped `officer`.
-- Lucky Wheel (on both D2 and D3) is entered as **Total Gems**, not a spin
-  count. Spins cost 1,500 gems each, or 13,500 gems for a 10-spin bundle
+- Lucky Wheel (on D3 — the old D2 Lucky Wheel field was removed entirely,
+  so D3 is the only place it's entered now) is entered as **Total Gems**,
+  not a spin count. Spins cost 1,500 gems each, or 13,500 gems for a
+  10-spin bundle
   (the better rate) — gems get spent on bundles first, leftover gems on
   single spins, capped at the game's 150-spin limit — same live plain-text
   math under the field as Stamina Cans: bundles used, spins bought, points
