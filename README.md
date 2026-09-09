@@ -181,6 +181,18 @@ page once the app is running:
   48 slots, TSV export) is visible only to the `admin` role — officers and
   regular members don't get it at all, even read-only; see "Publishing
   the SvS schedule" below for how they see the finalized result instead.
+  MY BAG **auto-saves as a draft** while a member is filling it out —
+  every field, toggle, time slot, and the notes box — so a refresh, a
+  closed tab, or a lost connection before they hit SUBMIT doesn't lose
+  their progress. Saves are debounced (about 700ms after the last change,
+  flushed immediately on page close) rather than firing on every
+  keystroke, and each draft is stored under `Store.bagDrafts`, keyed by
+  member id exactly like `Store.bagSubmissions` — so a member only ever
+  sees their own draft, never anyone else's, and it syncs the same way
+  everything else does once Supabase is configured (see "Going
+  multi-user" below). Submitting the bag clears that member's draft and
+  writes to `Store.bagSubmissions` as before — the draft is purely a
+  not-yet-submitted safety net, not a second copy of submitted data.
 - **Feedback** (`#/feedback`) — signed-in members can post ideas/bugs;
   anyone can upvote/downvote.
 - **Admin** (`#/admin`) — visible to `officer`/`admin` members (in the

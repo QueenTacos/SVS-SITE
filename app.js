@@ -79,6 +79,10 @@ function renderShell() {
   `;
   document.getElementById("signInBtn")?.addEventListener("click", openSignIn);
   document.getElementById("signOutBtn")?.addEventListener("click", () => {
+    // Flush any pending debounced draft save first — svsWizardTargetUser()
+    // (and so the draft's owner id) can no longer be resolved once
+    // currentUser is cleared.
+    flushDraftAutosave();
     Store.currentUser = null;
     renderShell();
     router();
@@ -87,8 +91,10 @@ function renderShell() {
   // of someone else's bag — otherwise it'd silently stick around and hijack
   // the next visit to MY BAG. The Admin "Edit" button navigates
   // programmatically instead of via one of these anchors, so it's unaffected.
+  // Flush first — svsWizardTargetUser() needs svsEditingMemberId intact to
+  // resolve the member actually being edited, not the admin's own id.
   document.querySelectorAll(".topbar a, .bottom-nav a").forEach((a) =>
-    a.addEventListener("click", () => { svsEditingMemberId = null; })
+    a.addEventListener("click", () => { flushDraftAutosave(); svsEditingMemberId = null; })
   );
   tickClock();
 }
@@ -750,7 +756,12 @@ function blankDraft() {
 }
 
 function loadDraft(user) {
-  const existing = Store.bagSubmissions[user.id];
+  // Prefer an in-progress autosaved draft (Store.bagDrafts) over the last
+  // official submission (Store.bagSubmissions) — it's the more recent
+  // in-flight edit. Falls back to the last submission (so re-opening MY
+  // BAG to make changes still starts from what was actually submitted),
+  // then to a blank form for a brand-new member.
+  const existing = Store.bagDrafts[user.id] || Store.bagSubmissions[user.id];
   if (existing) {
     // fill in any structure gaps (e.g. new schedule days) without losing saved data
     const d = blankDraft();
@@ -765,6 +776,47 @@ function loadDraft(user) {
   }
   return blankDraft();
 }
+
+// ---------------------------------------------------------------------------
+// Auto-save the in-progress MY BAG wizard (svsDraft) as a draft, debounced
+// so rapid typing doesn't fire a write per keystroke. Keyed by whichever
+// member the wizard is currently editing (svsWizardTargetUser() — normally
+// the signed-in member themselves, or the member an admin is editing on
+// their behalf), so a draft only ever lands under its own owner's id and
+// is only ever read back for that same id — one member can't see another
+// member's in-progress draft. Resolves the target user at fire time (not
+// schedule time) so it can't write to a stale id if the wizard's context
+// changed in between.
+// ---------------------------------------------------------------------------
+let draftSaveTimer = null;
+const DRAFT_SAVE_DEBOUNCE_MS = 700;
+
+function scheduleDraftAutosave() {
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(() => {
+    draftSaveTimer = null;
+    flushDraftAutosave();
+  }, DRAFT_SAVE_DEBOUNCE_MS);
+}
+
+// Writes the pending draft immediately (skipping the debounce delay) —
+// used right before anything that could otherwise lose the last few
+// un-debounced keystrokes: the page unloading, or the current user
+// signing out mid-edit.
+function flushDraftAutosave() {
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = null;
+  const user = svsWizardTargetUser();
+  if (!user || !svsDraft) return;
+  const drafts = Store.bagDrafts;
+  drafts[user.id] = svsDraft;
+  Store.bagDrafts = drafts;
+}
+
+window.addEventListener("beforeunload", flushDraftAutosave);
+// Mobile browsers (notably iOS Safari) often skip beforeunload on tab
+// close/switch — pagehide is the reliable equivalent there.
+window.addEventListener("pagehide", flushDraftAutosave);
 
 function svsGate(el, msg) {
   el.innerHTML = `
@@ -816,6 +868,11 @@ function renderSvSWizard(el) {
   `;
   if (svsEditingMemberId) {
     el.querySelector("#exitEdit").onclick = () => {
+      // Flush before clearing svsEditingMemberId — otherwise the pending
+      // save would resolve to the admin's own id instead of the member
+      // actually being edited, since svsWizardTargetUser() falls back to
+      // Store.currentUser once svsEditingMemberId is gone.
+      flushDraftAutosave();
       svsEditingMemberId = null;
       svsDraft = null;
       svsWizardStep = "backpack";
@@ -1020,6 +1077,7 @@ function renderWizardBackpack(el, wrap) {
   el.querySelectorAll("[data-toggle]").forEach((btn) => {
     btn.addEventListener("click", () => {
       svsDraft.values[btn.dataset.toggle] = !svsDraft.values[btn.dataset.toggle];
+      scheduleDraftAutosave();
       renderWizardBackpack(el, wrap);
     });
   });
@@ -1039,6 +1097,7 @@ function renderWizardBackpack(el, wrap) {
         const statusEl = el.querySelector(`[data-day-status="${field.key}"]`);
         if (statusEl) statusEl.innerHTML = dayStatusHtml(field.statusKey, svsDraft.values);
       }
+      scheduleDraftAutosave();
     };
     input.addEventListener("input", commitLocal);
     // On change (blur/enter/select), also run the sync-to-day-field copy
@@ -1138,7 +1197,7 @@ function renderWizardTimeSlots(el) {
     </div>
   `;
   el.querySelectorAll("[data-mode]").forEach((b) =>
-    b.addEventListener("click", () => { svsDraft.availabilityType = b.dataset.mode; renderWizardTimeSlots(el); })
+    b.addEventListener("click", () => { svsDraft.availabilityType = b.dataset.mode; scheduleDraftAutosave(); renderWizardTimeSlots(el); })
   );
   el.querySelectorAll(".day-tabs button").forEach((b) =>
     b.addEventListener("click", () => {
@@ -1152,6 +1211,7 @@ function renderWizardTimeSlots(el) {
       const arr = mode === "all" ? svsDraft.slots.all : svsDraft.slots.byDay[svsWizardDayTab];
       arr[i] = !arr[i];
       btn.classList.toggle("on", arr[i]);
+      scheduleDraftAutosave();
     })
   );
   el.querySelector("#wizBack").onclick = () => { svsWizardStep = "review"; refreshSvS(); };
@@ -1199,6 +1259,10 @@ function renderWizardSubmit(el, wrap) {
     </div>
     <div id="wizMsg" style="margin-top:10px;font-size:12px;color:var(--accent-green);"></div>
   `;
+  el.querySelector("#wizNotes").addEventListener("input", (e) => {
+    svsDraft.notes = e.target.value;
+    scheduleDraftAutosave();
+  });
   const warnEl = el.querySelector("#wizScheduleWarning");
   const submitBtn = el.querySelector("#wizSubmit");
   let confirmedPastWarning = false;
@@ -1208,6 +1272,16 @@ function renderWizardSubmit(el, wrap) {
     const all = Store.bagSubmissions;
     all[user.id] = svsDraft;
     Store.bagSubmissions = all;
+    // This submission now supersedes the autosaved draft — clear it (and
+    // cancel any still-pending debounced save) so a later visit to MY BAG
+    // starts from what was actually submitted, not a leftover draft.
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
+    const drafts = Store.bagDrafts;
+    if (drafts[user.id]) {
+      delete drafts[user.id];
+      Store.bagDrafts = drafts;
+    }
     svsDraft = null;
     svsWizardStep = "backpack";
     finishSubmit();
@@ -2343,7 +2417,9 @@ function renderAdmin(el) {
       Store.members = m;
       if (Store.currentUser && Store.currentUser.id === id) {
         // Sign them out so they re-authenticate with the PIN just set,
-        // rather than continuing on a stale in-memory session.
+        // rather than continuing on a stale in-memory session. Flush first
+        // in case they have an in-progress bag draft pending autosave.
+        flushDraftAutosave();
         Store.currentUser = null;
         renderShell();
         router();

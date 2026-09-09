@@ -377,6 +377,7 @@ const SUPABASE_SYNCED_DEFAULTS = {
   wos_furnace_fc: SEED_FURNACE_FC,
   wos_alliance_colors: {},
   wos_bag_submissions: {},
+  wos_bag_drafts: {},
 };
 
 // ---------------------------------------------------------------------------
@@ -439,6 +440,7 @@ const Store = {
       this._set("wos_furnace_fc", SEED_FURNACE_FC);
       this._set("wos_alliance_colors", {});
       this._set("wos_bag_submissions", {});
+      this._set("wos_bag_drafts", {});
       this._set("wos_current_user", null);
       localStorage.setItem("wos_seeded_v2", "1");
     } else {
@@ -578,6 +580,18 @@ const Store = {
   //   slots: { all: [bool*48] } | { byDay: { [day]: [bool*48] } }, notes, updatedAt } }
   get bagSubmissions() { return this._synced("wos_bag_submissions", {}).get(); },
   set bagSubmissions(v) { this._synced("wos_bag_submissions", {}).set(v); },
+
+  // In-progress, not-yet-submitted MY BAG state — same shape as
+  // bagSubmissions, keyed by memberId, and synced the same way. Auto-saved
+  // (debounced) by app.js as a member fills out the wizard, so a refresh
+  // or closed tab before they hit SUBMIT doesn't lose their progress. A
+  // member's entry here is only ever read/written for that member's own
+  // id (or, for an admin editing someone else's bag, that member's id —
+  // never the admin's), so one member's draft is never exposed to
+  // another. Cleared for a given member once they actually submit — see
+  // the doSave() in app.js's renderWizardSubmit.
+  get bagDrafts() { return this._synced("wos_bag_drafts", {}).get(); },
+  set bagDrafts(v) { this._synced("wos_bag_drafts", {}).set(v); },
 
   // Always localStorage-only, Supabase or not — see the comment above
   // SUPABASE_SYNCED_DEFAULTS.
