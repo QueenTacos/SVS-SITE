@@ -202,10 +202,28 @@ page once the app is running:
   topbar and bottom nav once signed in as one), but what they see there
   differs sharply. The `admin` role gets everything: state config,
   alliance tags, the full member roster and roles, bulk-clear SvS slots,
-  furnace brackets, bag submission editing, and feedback moderation. An
-  `officer` gets only two panels — Members and Bag submissions, both
-  scoped to their own alliance (see below) — everything else on the page
-  is simply not rendered for them, not just disabled.
+  a full bag-cycle reset (Clear Bags — see below), furnace brackets, bag
+  submission editing, and feedback moderation. An `officer` gets only two
+  panels — Members and Bag submissions, both scoped to their own alliance
+  (see below) — everything else on the page is simply not rendered for
+  them, not just disabled.
+
+### Clear Bags (resetting for a new SvS cycle)
+
+Admin → SvS prep — bulk actions has a **Clear Bags** button (`admin` role
+only, same as everything else in that panel) for starting a fresh cycle.
+Unlike **Clear all booked slots** just above it (which only unassigns the
+SCHEDULE grid), Clear Bags wipes every member's bag data everywhere it
+lives: `Store.bagSubmissions` (submitted bags — values, calculated points,
+notes, and their selected time slots), `Store.bagDrafts` (autosaved,
+not-yet-submitted drafts — see "Auto-saves as a draft" above), and the
+SCHEDULE grid + its per-day published flags (`Store.schedule` /
+`Store.schedulePublished`), since those are generated from members' bag
+time-slot selections. It does **not** touch `Store.members` — names, PINs,
+Gamer IDs, alliance tags, and roles are all untouched, so everyone signs
+back in exactly as before and just sees a blank MY BAG. Because it's
+state-wide and irreversible, it asks for confirmation (a plain `confirm()`
+dialog) before doing anything, and does nothing if that's cancelled.
 
 ### Admins editing a member's bag
 

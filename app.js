@@ -2179,6 +2179,10 @@ function renderAdmin(el) {
       <div class="planner-header"><strong>SvS prep — bulk actions</strong></div>
       <p style="font-size:12px;color:var(--text-dim);">${countFilledSlots()} slots currently booked across all days.</p>
       <button class="btn small" id="admClearSlots" style="color:var(--accent-red);">Clear all booked slots</button>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+        <p style="font-size:12px;color:var(--text-dim);margin:0 0 8px;">Reset the planner for a new SvS cycle — clears every member's bag entries, drafts, submissions, points, and selected time slots, plus the booked SCHEDULE grid those slots feed. Member accounts, PINs, and roles are untouched.</p>
+        <button class="btn small primary" id="admClearBags" style="background:var(--accent-red);border-color:var(--accent-red);">🗑 Clear Bags (reset for new cycle)</button>
+      </div>
     </div>
 
     <div class="panel">
@@ -2451,6 +2455,40 @@ function renderAdmin(el) {
     const sched = Store.schedule;
     Object.keys(sched).forEach((day) => sched[day].forEach((s) => (s.member = null)));
     Store.schedule = sched;
+    renderAdmin(el);
+  });
+  // Full bag-cycle reset — every member's bag data (entries, drafts,
+  // submissions, calculated points, and their selected time slots) plus
+  // the SCHEDULE grid those slot selections feed into. Deliberately does
+  // NOT touch Store.members (accounts, PINs, gamer names/IDs, alliance
+  // tags, roles) or anything else — same admin-only gating as every other
+  // control in this panel (canSeeSchedule/officerScoped above), plus the
+  // confirmation below since this is a state-wide, irreversible action.
+  el.querySelector("#admClearBags")?.addEventListener("click", () => {
+    const confirmed = confirm(
+      "Are you sure you want to clear ALL member bags? This will permanently remove all current bag entries, submissions, saved drafts, points, and selected time slots for every member. Member accounts and profile information will NOT be deleted."
+    );
+    if (!confirmed) return;
+
+    Store.bagSubmissions = {};
+    Store.bagDrafts = {};
+    // Fresh objects (not the shared SEED_SCHEDULE/SEED_SCHEDULE_PUBLISHED
+    // constants) — those are reused as fallback defaults elsewhere, and
+    // Store's Supabase-mode cache can hold onto whatever reference is
+    // assigned here, so reusing the constants directly would risk a later
+    // read-modify-write mutating the shared seed data itself.
+    Store.schedule = SEED_SCHEDULE_DAYS.reduce((acc, day) => { acc[day] = emptySlots(); return acc; }, {});
+    Store.schedulePublished = SEED_SCHEDULE_DAYS.reduce((acc, day) => { acc[day] = false; return acc; }, {});
+
+    // Drop any in-progress MY BAG wizard state (this admin's own, or one
+    // they're editing on a member's behalf), and cancel any debounced
+    // autosave still pending — otherwise it could fire moments later and
+    // write stale, just-cleared data straight back into the store.
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
+    svsDraft = null;
+    svsEditingMemberId = null;
+
     renderAdmin(el);
   });
   const openMemberBagEditor = (memberId) => {
