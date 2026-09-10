@@ -688,9 +688,16 @@ someone else's name. The sign-in modal has two tabs:
   name/ID or a wrong PIN is rejected with an error, not silently let
   through.
 - **New Member** — for anyone without an account yet: enter your Gamer
-  Name, Alliance Tag, Gamer ID, and create a 4-digit PIN. That PIN is
-  required on every login from then on. Blocked if the name or Gamer ID
-  is already taken (you're pointed at "Existing Member" instead).
+  Name, pick your Alliance from a dropdown, enter your Gamer ID, and
+  create a 4-digit PIN. That PIN is required on every login from then on.
+  Blocked if the name or Gamer ID is already taken (you're pointed at
+  "Existing Member" instead). The alliance dropdown lists exactly the
+  tags currently configured in Admin → Alliances — there's no free-text
+  entry, so a new account can never be created under a made-up alliance.
+  It stays in sync automatically: add a tag in Admin and it's selectable
+  here right away; remove one and it disappears from the list. If no
+  alliance tags exist yet, the dropdown is disabled with a note to that
+  effect until an admin adds one.
 
 A member can also be added directly from Admin → Members ("Add member"),
 which now also requires a 4-digit PIN at creation time — same reasoning:

