@@ -296,7 +296,7 @@ function renderHome(el) {
       ${opCard({
         href: "#/championship", color: "var(--accent-green)", title: "championship",
         desc: "Alliance Championship lane planner — import players, auto-balance lanes.",
-        meta: `${Store.championship.players.length} PLAYERS IMPORTED`,
+        meta: `${championshipTotalPlayersImported()} PLAYERS IMPORTED (ALL ALLIANCES)`,
       })}
       ${PLANNED_TOOLS.map((t) =>
         opCard({
@@ -2535,49 +2535,75 @@ function renderAdmin(el) {
 
 // ---------------------------------------------------------------------------
 // ALLIANCE CHAMPIONSHIP — lane planner
-// Admin-only tool. Screenshots -> client-side OCR extract (Tesseract.js) ->
-// editable review list -> auto-balance into 3 lanes (two "primary" lanes
-// maxed to 20/20 and balanced by total power, the third lane holds whoever
-// is left over) -> manual drag/swap/edit -> explicit Save/Clear. See
-// balanceChampionshipLanes, parseChampionshipOcrText, DEFAULT_CHAMPIONSHIP
-// etc. in data.js for the underlying data model and algorithm.
+// Admin/R4-only tool, and ALLIANCE-SCOPED: every alliance tag gets its own
+// completely separate player list, lane assignments, and primary-pair
+// choice — see the big comment above Store.championship's getter in
+// data.js for the full access model and its honest limits. Two ways to
+// build the player list — screenshots -> client-side OCR extract
+// (Tesseract.js), or paste/upload a "name,power" CSV dataset — both feed
+// the SAME roster and dedupe against each other, then auto-balance into 3
+// lanes (two "primary" lanes maxed to 20/20 and balanced by total power,
+// the third lane holds whoever is left over) -> manual drag/swap/edit ->
+// explicit Save/Clear. See balanceChampionshipLanes, parseChampionshipOcrText,
+// parseChampionshipDataset, buildChampionshipImportPreview, and
+// defaultChampionshipData in data.js for the underlying data model and
+// algorithms.
 //
 // Deliberately NOT wired into the bag planner's debounced autosave system:
-// this is an admin planning tool with its own explicit "Save Championship
-// Plan" button (per the feature request), not a per-member form that needs
-// to survive an accidental refresh mid-keystroke. Working edits live in
-// champWorking (in-memory only, a deep copy of the last-saved plan) until
-// Save writes them back to Store.championship; Clear wipes both. Reloading
-// the page always starts from whatever was last explicitly saved.
+// this is an admin/R4 planning tool with its own explicit "Save
+// Championship Plan" button (per the feature request), not a per-member
+// form that needs to survive an accidental refresh mid-keystroke. Working
+// edits live in champWorking (in-memory only, a deep copy of the last-saved
+// plan for whichever alliance is currently being viewed) until Save writes
+// them back to that alliance's slice of Store.championship; Clear wipes
+// both, for that alliance only. Reloading the page always starts from
+// whatever was last explicitly saved.
 //
 // Store.championship is its own key, completely separate from
 // Store.members/bagSubmissions/bagDrafts/schedule — nothing in this section
 // ever reads or writes any of those, and nothing in the bag planner reads
 // or writes this.
 // ---------------------------------------------------------------------------
-let champWorking = null; // deep-copied working draft of Store.championship, or null before first load
-let champDirty = false; // true once champWorking differs from the last-saved Store.championship
+let champWorking = null; // deep-copied working draft of one alliance's Championship data, or null before first load
+let champWorkingAlliance = null; // which alliance tag champWorking currently holds — reloaded whenever this changes
+let champDirty = false; // true once champWorking differs from the last-saved data for champWorkingAlliance
 let champOcrBusy = false;
 let champOcrStatus = "";
 let champDragId = null; // id of the player currently mid-drag
+let champViewingAlliance = null; // full-admin-only: which alliance's dataset the "VIEWING ALLIANCE" picker currently shows
+let champImportMode = "screenshots"; // "screenshots" | "dataset" — which import panel is open
+let champDatasetText = ""; // the "Paste Player Dataset" textarea's current content
+let champImportBusy = false; // true while reading an uploaded .csv file
+let champImportPreview = null; // set by "Preview Import" — { rowsRead, validPlayers, duplicatesRemoved, conflicts, invalidRows, rows } from data.js's buildChampionshipImportPreview
 // Session-only import stats (not part of Store.championship — purely
-// informational about what's happened in this working session) — reset by
-// Clear Championship Plan, or naturally on a full page reload.
+// informational about what's happened in this working session, per
+// alliance) — reset by Clear Championship Plan, switching viewed alliance,
+// or naturally on a full page reload.
 let champScreenshotsProcessed = 0;
 let champDuplicatesRemoved = 0;
 
-function ensureChampWorking() {
-  if (!champWorking) {
-    const saved = Store.championship;
-    champWorking = {
-      players: (saved.players || []).map((p) => ({ ...p })),
-      lanes: {
-        left: [...(saved.lanes?.left || [])],
-        middle: [...(saved.lanes?.middle || [])],
-        right: [...(saved.lanes?.right || [])],
-      },
-      primaryPair: saved.primaryPair || "left_right",
-    };
+// Which alliance tag, if any, the signed-in user is allowed to view/edit
+// Championship data for. An R4/officer is hard-locked to their own member
+// record's alliance — there is no UI path for them to type or select a
+// different one. A full admin isn't tied to a single alliance in this app
+// (the permanent admin login has alliance: ""), so they pick which
+// alliance's dataset to look at via champViewingAlliance; nothing here
+// ever lets that choice come from free-form input, only from the actual
+// list of configured alliance tags (Store.alliances).
+function championshipAccessibleAlliance(user) {
+  if (!user) return null;
+  if (user.role === "officer") return user.alliance || null;
+  if (user.role === "admin") return champViewingAlliance || Store.alliances[0] || null;
+  return null;
+}
+function canAccessChampionship(user) {
+  return !!user && (user.role === "admin" || user.role === "officer");
+}
+
+function ensureChampWorking(allianceTag) {
+  if (!champWorking || champWorkingAlliance !== allianceTag) {
+    champWorking = getChampionshipForAlliance(allianceTag);
+    champWorkingAlliance = allianceTag;
     champDirty = false;
   }
   return champWorking;
@@ -2729,19 +2755,44 @@ function renderChampionship(el) {
     el.querySelector("#chGoSignIn").onclick = openSignIn;
     return;
   }
-  if (user.role !== "admin") {
+  if (!canAccessChampionship(user)) {
     el.innerHTML = `
       <div class="eyebrow">// ALLIANCE CHAMPIONSHIP</div>
       <h1 class="page-title" style="color:var(--accent-green)">championship</h1>
       <div class="panel gate">
-        <p>This tool is for state/alliance leadership.</p>
+        <p>This tool is for alliance leadership — Admin or R4.</p>
         <p style="font-size:12px;">Signed in as ${escapeHtml(user.name)} (${roleLabel(user.role)}) — ask an admin for access if you need to plan Championship lanes.</p>
       </div>
     `;
     return;
   }
+  if (user.role === "officer" && !user.alliance) {
+    el.innerHTML = `
+      <div class="eyebrow">// ALLIANCE CHAMPIONSHIP</div>
+      <h1 class="page-title" style="color:var(--accent-green)">championship</h1>
+      <div class="panel gate">
+        <p>Your account isn't assigned to an alliance yet.</p>
+        <p style="font-size:12px;">Ask an admin to set your alliance in Admin → Members — Championship data is scoped per alliance, so R4 access needs an alliance tag first.</p>
+      </div>
+    `;
+    return;
+  }
+  const alliances = Store.alliances;
+  if (user.role === "admin" && !champViewingAlliance) champViewingAlliance = alliances[0] || null;
+  const allianceTag = championshipAccessibleAlliance(user);
+  if (!allianceTag) {
+    el.innerHTML = `
+      <div class="eyebrow">// ALLIANCE CHAMPIONSHIP</div>
+      <h1 class="page-title" style="color:var(--accent-green)">championship</h1>
+      <div class="panel gate">
+        <p>No alliance tags exist yet.</p>
+        <p style="font-size:12px;">Add one in Admin → Alliances before using Alliance Championship — every dataset here is scoped to a specific alliance.</p>
+      </div>
+    `;
+    return;
+  }
 
-  ensureChampWorking();
+  ensureChampWorking(allianceTag);
   const w = champWorking;
   const sortedPlayers = [...w.players].sort((a, b) => b.power - a.power);
   const primaryKeys = PRIMARY_PAIR_LANES[w.primaryPair] || PRIMARY_PAIR_LANES.left_right;
@@ -2756,10 +2807,31 @@ function renderChampionship(el) {
     <div class="eyebrow">// ALLIANCE CHAMPIONSHIP</div>
     <h1 class="page-title" style="color:var(--accent-green)">championship</h1>
     <p style="font-size:12.5px;color:var(--text-dim);margin:-6px 0 16px;">
-      Import the Championship player list from screenshots, review it, then auto-balance two maxed 20-player lanes as evenly as possible — everyone else overflows into the third lane. Separate from bag planning; nothing here touches member accounts, PINs, or bag data.
+      Import the Championship player list from screenshots or a dataset, review it, then auto-balance two maxed 20-player lanes as evenly as possible — everyone else overflows into the third lane. Separate from bag planning; nothing here touches member accounts, PINs, or bag data.
     </p>
+    ${
+      user.role === "admin"
+        ? `<div class="field" style="max-width:220px;margin-bottom:16px;">
+            <label>VIEWING ALLIANCE</label>
+            <select id="champAllianceSelect">
+              ${alliances.map((a) => `<option value="${escapeHtml(a)}" ${a === allianceTag ? "selected" : ""}>${escapeHtml(a)}</option>`).join("")}
+            </select>
+          </div>`
+        : `<p class="eyebrow" style="margin:-6px 0 16px;">ALLIANCE · <strong style="color:var(--accent-green);">${escapeHtml(allianceTag)}</strong></p>`
+    }
 
-    <div class="section-title">UPLOAD SCREENSHOTS</div>
+    <div class="section-title">ADD PLAYERS</div>
+    <div class="pill-toggle" style="margin-bottom:10px;">
+      <button data-importmode="screenshots" class="${champImportMode === "screenshots" ? "active" : ""}">UPLOAD SCREENSHOTS</button>
+      <button data-importmode="dataset" class="${champImportMode === "dataset" ? "active" : ""}">IMPORT DATASET</button>
+    </div>
+    <div style="margin-bottom:14px;">
+      <button class="btn small" id="champAddPlayerManual">+ Add Player Manually</button>
+    </div>
+
+    ${
+      champImportMode === "screenshots"
+        ? `
     <div class="panel">
       <p style="font-size:12px;color:var(--text-dim);margin:0 0 12px;">Upload one or more screenshots of the Alliance Championship player rankings. Overlapping screenshots are fine — players already on the list below won't be added twice.</p>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
@@ -2787,7 +2859,79 @@ function renderChampionship(el) {
             </div>`
           : ""
       }
-    </div>
+    </div>`
+        : `
+    <div class="panel">
+      <p style="font-size:12px;color:var(--text-dim);margin:0 0 10px;">Paste CSV-style data (a <code>name,power</code> header row, then one row per player) or upload a matching .csv file. Only Gamer Name and Power are read — everything else about a player is ignored.</p>
+      <label style="display:block;font-size:10.5px;color:var(--text-faint);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">Paste Player Dataset</label>
+      <textarea id="champDatasetText" class="feedback-input" style="min-height:150px;font-family:'SF Mono',Consolas,monospace;font-size:12px;" placeholder="name,power&#10;oakleygirl,1169&#10;Mjy,822&#10;Metal Adjacent,678">${escapeHtml(champDatasetText)}</textarea>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px;">
+        <input type="file" id="champCsvFile" accept=".csv,text/csv" style="max-width:240px;font-size:12px;color:var(--text-dim);" />
+        <button class="btn primary small" id="champPreviewImport" ${champImportBusy ? "disabled" : ""}>${champImportBusy ? "Reading…" : "Preview Import"}</button>
+      </div>
+    </div>`
+    }
+
+    ${
+      champImportPreview
+        ? `
+    <div class="section-title">DATASET IMPORT PREVIEW</div>
+    <div class="panel">
+      <div class="champ-stat-row" style="margin-bottom:14px;">
+        ${[
+          ["ROWS READ", champImportPreview.rowsRead],
+          ["VALID PLAYERS", champImportPreview.validPlayers],
+          ["DUPLICATES REMOVED", champImportPreview.duplicatesRemoved],
+          ["CONFLICTS", champImportPreview.conflicts],
+          ["INVALID ROWS", champImportPreview.invalidRows],
+        ]
+          .map(
+            ([label, val]) => `
+          <div style="background:var(--panel-2);border:1px solid var(--border);border-radius:4px;padding:8px 10px;text-align:center;">
+            <div style="font-size:9.5px;color:var(--text-faint);letter-spacing:.5px;">${label}</div>
+            <div style="font-size:16px;font-weight:700;margin-top:2px;${(label === "CONFLICTS" || label === "INVALID ROWS") && val > 0 ? "color:var(--accent-amber);" : ""}">${val}</div>
+          </div>`
+          )
+          .join("")}
+      </div>
+      ${
+        champImportPreview.rows.length
+          ? `<div style="overflow-x:auto;">
+              <table>
+                <thead><tr><th>GAMER NAME</th><th>POWER</th><th>STATUS</th><th></th></tr></thead>
+                <tbody>
+                  ${champImportPreview.rows
+                    .map(
+                      (r) => `
+                    <tr>
+                      <td><input type="text" data-previewname="${r.tempId}" value="${escapeHtml(r.name)}" style="width:100%;min-width:130px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-size:12.5px;" /></td>
+                      <td>
+                        ${
+                          r.category === "conflict"
+                            ? `<select data-previewconflict="${r.tempId}" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-size:12px;">
+                                <option value="existing" ${r.chosenPower === r.existingPower ? "selected" : ""}>Keep existing (${formatFullNumber(r.existingPower)})</option>
+                                <option value="imported" ${r.chosenPower !== r.existingPower ? "selected" : ""}>Use imported (${formatFullNumber(r.power)})</option>
+                              </select>`
+                            : `<input type="text" inputmode="decimal" data-previewpower="${r.tempId}" value="${r.power ? formatFullNumber(r.power) : ""}" style="width:100%;min-width:90px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-size:12.5px;" />`
+                        }
+                      </td>
+                      <td><span class="status-badge ${r.category === "ready" ? "done" : "planned"}">${r.statusLabel.toUpperCase()}</span></td>
+                      <td><button class="btn small" data-previewremove="${r.tempId}" style="color:var(--accent-red);">remove</button></td>
+                    </tr>`
+                    )
+                    .join("")}
+                </tbody>
+              </table>
+            </div>`
+          : `<div class="empty">Nothing new to import — every row was already on the list with a matching power.</div>`
+      }
+      <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;">
+        <button class="btn primary" id="champImportCommit">Import Players</button>
+        <button class="btn small" id="champImportCancel">Cancel</button>
+      </div>
+    </div>`
+        : ""
+    }
 
     <div class="section-title">PLAYER LIST — REVIEW &amp; CORRECT</div>
     <div class="panel">
@@ -2856,16 +3000,42 @@ function renderChampionship(el) {
     }
 
     <div style="display:flex;gap:10px;margin-top:20px;flex-wrap:wrap;align-items:center;">
-      <button class="btn primary" id="champSave">Save Championship Plan</button>
-      <button class="btn small" id="champClear" style="color:var(--accent-red);">Clear Championship Plan</button>
+      <button class="btn primary" id="champSave">Save ${escapeHtml(allianceTag)} Championship Plan</button>
+      <button class="btn small" id="champClear" style="color:var(--accent-red);">Clear ${escapeHtml(allianceTag)} Championship Plan</button>
       ${champDirty ? `<span style="font-size:11.5px;color:var(--accent-amber);">Unsaved changes</span>` : ""}
     </div>
   `;
 
-  wireChampionshipHandlers(el);
+  wireChampionshipHandlers(el, allianceTag);
 }
 
-function wireChampionshipHandlers(el) {
+function wireChampionshipHandlers(el, allianceTag) {
+  el.querySelector("#champAllianceSelect")?.addEventListener("change", (e) => {
+    champViewingAlliance = e.target.value;
+    champWorking = null; // force ensureChampWorking() to reload the newly-selected alliance's data
+    champImportPreview = null;
+    champDatasetText = "";
+    champImportMode = "screenshots";
+    champScreenshotsProcessed = 0;
+    champDuplicatesRemoved = 0;
+    champOcrStatus = "";
+    renderChampionship(el);
+  });
+
+  el.querySelectorAll("[data-importmode]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      champImportMode = btn.dataset.importmode;
+      renderChampionship(el);
+    })
+  );
+
+  const addPlayerManually = () => {
+    champWorking.players.push({ id: newChampPlayerId(), name: "New Player", power: 0, needsReview: false });
+    champDirty = true;
+    renderChampionship(el);
+  };
+  el.querySelector("#champAddPlayerManual")?.addEventListener("click", addPlayerManually);
+
   el.querySelector("#champProcess")?.addEventListener("click", async () => {
     const input = el.querySelector("#champFiles");
     const files = input?.files ? Array.from(input.files) : [];
@@ -2900,9 +3070,95 @@ function wireChampionshipHandlers(el) {
     renderChampionship(el);
   });
 
-  el.querySelector("#champAddPlayer")?.addEventListener("click", () => {
-    champWorking.players.push({ id: newChampPlayerId(), name: "New Player", power: 0, needsReview: false });
+  el.querySelector("#champAddPlayer")?.addEventListener("click", addPlayerManually);
+
+  // ---- Dataset import (paste or .csv upload) ----------------------------
+  el.querySelector("#champDatasetText")?.addEventListener("input", (e) => {
+    champDatasetText = e.target.value; // no re-render needed — just keep it in sync for Preview Import
+  });
+
+  el.querySelector("#champPreviewImport")?.addEventListener("click", async () => {
+    const fileInput = el.querySelector("#champCsvFile");
+    const file = fileInput?.files?.[0];
+    let text = champDatasetText;
+    if (file) {
+      champImportBusy = true;
+      renderChampionship(el);
+      try {
+        text = await file.text();
+        champDatasetText = text;
+      } catch (err) {
+        console.error("Couldn't read the uploaded CSV file:", err);
+        champImportBusy = false;
+        renderChampionship(el);
+        alert("Couldn't read that file — try again or paste the dataset instead.");
+        return;
+      }
+      champImportBusy = false;
+    }
+    const parsed = parseChampionshipDataset(text);
+    if (!parsed.rows.length) {
+      renderChampionship(el);
+      alert("Paste a dataset or choose a CSV file first.");
+      return;
+    }
+    champImportPreview = buildChampionshipImportPreview(parsed.rows, champWorking.players);
+    renderChampionship(el);
+  });
+
+  el.querySelectorAll("[data-previewname]").forEach((inp) =>
+    inp.addEventListener("change", () => {
+      const row = champImportPreview?.rows.find((r) => r.tempId === inp.dataset.previewname);
+      if (row) row.name = inp.value.trim();
+    })
+  );
+  el.querySelectorAll("[data-previewpower]").forEach((inp) =>
+    inp.addEventListener("change", () => {
+      const row = champImportPreview?.rows.find((r) => r.tempId === inp.dataset.previewpower);
+      const parsed = parsePowerToken(inp.value);
+      if (row && parsed != null) row.power = parsed;
+    })
+  );
+  el.querySelectorAll("[data-previewconflict]").forEach((sel) =>
+    sel.addEventListener("change", () => {
+      const row = champImportPreview?.rows.find((r) => r.tempId === sel.dataset.previewconflict);
+      if (row) row.chosenPower = sel.value === "imported" ? row.power : row.existingPower;
+    })
+  );
+  el.querySelectorAll("[data-previewremove]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      if (!champImportPreview) return;
+      champImportPreview.rows = champImportPreview.rows.filter((r) => r.tempId !== btn.dataset.previewremove);
+      renderChampionship(el);
+    })
+  );
+
+  el.querySelector("#champImportCommit")?.addEventListener("click", () => {
+    if (!champImportPreview) return;
+    champImportPreview.rows.forEach((r) => {
+      if (r.category === "conflict") {
+        const existing = champWorking.players.find((p) => (p.name || "").trim().toLowerCase() === r.name.trim().toLowerCase());
+        if (existing) {
+          existing.power = r.chosenPower;
+          existing.needsReview = false;
+        }
+        return;
+      }
+      champWorking.players.push({
+        id: newChampPlayerId(),
+        name: r.name ? r.name.trim() : "",
+        power: r.power || 0,
+        needsReview: r.category === "invalid" || !r.name.trim() || !r.power,
+      });
+    });
     champDirty = true;
+    champImportPreview = null;
+    champDatasetText = "";
+    renderChampionship(el);
+  });
+
+  el.querySelector("#champImportCancel")?.addEventListener("click", () => {
+    champImportPreview = null;
     renderChampionship(el);
   });
 
@@ -2991,7 +3247,7 @@ function wireChampionshipHandlers(el) {
   });
 
   el.querySelector("#champSave")?.addEventListener("click", () => {
-    Store.championship = {
+    setChampionshipForAlliance(allianceTag, {
       players: champWorking.players.map((p) => ({ ...p })),
       lanes: {
         left: [...champWorking.lanes.left],
@@ -2999,22 +3255,24 @@ function wireChampionshipHandlers(el) {
         right: [...champWorking.lanes.right],
       },
       primaryPair: champWorking.primaryPair,
-    };
+    });
     champDirty = false;
     renderChampionship(el);
   });
 
   el.querySelector("#champClear")?.addEventListener("click", () => {
     const confirmed = confirm(
-      "Are you sure you want to clear the Alliance Championship plan? This will permanently remove the imported player list, screenshot data, and lane assignments. Member accounts, bags, and time slots will NOT be affected."
+      `Are you sure you want to clear the ${allianceTag} Championship plan? This will permanently remove ${allianceTag}'s imported player list, screenshot/dataset data, and lane assignments. Member accounts, bags, time slots, and every OTHER alliance's Championship data will NOT be affected.`
     );
     if (!confirmed) return;
-    Store.championship = { players: [], lanes: { left: [], middle: [], right: [] }, primaryPair: "left_right" };
+    clearChampionshipForAlliance(allianceTag);
     champWorking = null; // force ensureChampWorking() to reload the fresh empty state
     champDirty = false;
     champOcrStatus = "";
     champScreenshotsProcessed = 0;
     champDuplicatesRemoved = 0;
+    champImportPreview = null;
+    champDatasetText = "";
     renderChampionship(el);
   });
 }

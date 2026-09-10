@@ -372,10 +372,11 @@ const SUPABASE_SYNCED_DEFAULTS = {
   wos_alliance_colors: {},
   wos_bag_submissions: {},
   wos_bag_drafts: {},
-  // Alliance Championship lane plan — kept as its own literal here (not a
-  // reference to DEFAULT_CHAMPIONSHIP, which is defined further down the
-  // file) so this object's shape doesn't depend on declaration order.
-  wos_championship: { players: [], lanes: { left: [], middle: [], right: [] }, primaryPair: "left_right" },
+  // Alliance Championship lane plans, ONE PER ALLIANCE TAG — see the
+  // "Alliance Championship" block further down this file for why this is a
+  // map ({ [allianceTag]: { players, lanes, primaryPair } }) rather than a
+  // single shared object.
+  wos_championship: {},
 };
 
 // ---------------------------------------------------------------------------
@@ -439,7 +440,7 @@ const Store = {
       this._set("wos_alliance_colors", {});
       this._set("wos_bag_submissions", {});
       this._set("wos_bag_drafts", {});
-      this._set("wos_championship", { players: [], lanes: { left: [], middle: [], right: [] }, primaryPair: "left_right" });
+      this._set("wos_championship", {});
       this._set("wos_current_user", null);
       localStorage.setItem("wos_seeded_v2", "1");
     } else {
@@ -592,13 +593,24 @@ const Store = {
   get bagDrafts() { return this._synced("wos_bag_drafts", {}).get(); },
   set bagDrafts(v) { this._synced("wos_bag_drafts", {}).set(v); },
 
-  // Alliance Championship lane plan — separate from every bag/member key
-  // above; see the "Alliance Championship" block further down this file.
+  // Alliance Championship lane plans — a MAP of { [allianceTag]: { players,
+  // lanes, primaryPair } }, one independent dataset per alliance, separate
+  // from every bag/member key above. See the "Alliance Championship" block
+  // further down this file for the per-alliance access model.
+  //
+  // migrateLegacyChampionshipShape guards against the pre-alliance-scoping
+  // shape (a single { players, lanes, primaryPair } object, not a map of
+  // alliance tags to that shape) that this key held before this feature —
+  // rather than exposing that old, never-actually-scoped roster under a
+  // real alliance tag it was never associated with, it's preserved as-is
+  // under a synthetic "__legacy_unscoped__" key so nothing is silently
+  // lost, but it isn't shown to any alliance automatically.
   get championship() {
-    return this._synced("wos_championship", { players: [], lanes: { left: [], middle: [], right: [] }, primaryPair: "left_right" }).get();
+    const raw = this._synced("wos_championship", {}).get();
+    return migrateLegacyChampionshipShape(raw);
   },
   set championship(v) {
-    this._synced("wos_championship", { players: [], lanes: { left: [], middle: [], right: [] }, primaryPair: "left_right" }).set(v);
+    this._synced("wos_championship", {}).set(v);
   },
 
   // Always localStorage-only, Supabase or not — see the comment above
@@ -641,9 +653,33 @@ function isAdmin(user) {
 // Alliance Championship — lane planner. Entirely separate storage from the
 // bag planner (Store.bagSubmissions/bagDrafts/schedule) and from
 // Store.members — a Championship "player" here is a standalone roster
-// entry (imported from screenshots or typed in by an admin), not tied to a
-// site account/login at all, so clearing or editing it never touches
-// anyone's member profile, PIN, or bag data.
+// entry (imported from screenshots, a pasted/uploaded dataset, or typed in
+// by an admin), not tied to a site account/login at all, so clearing or
+// editing it never touches anyone's member profile, PIN, or bag data.
+//
+// SCOPING: each alliance tag gets its own completely independent dataset —
+// SYP's imported/edited player list, lanes, and primary-lane choice are
+// never visible to or editable by SUN, LIT, NEM, etc. Store.championship
+// (see the getter/setter above) holds the map of every alliance's data;
+// getChampionshipForAlliance/setChampionshipForAlliance/
+// clearChampionshipForAlliance below are the only way app.js reads or
+// writes one alliance's slice of it, and app.js's access-control layer
+// (championshipAccessibleAlliance/canAccessChampionship) is what decides
+// which alliance tag a given signed-in user is even allowed to pass in —
+// an R4/officer is hard-locked to their own member record's alliance tag
+// and the UI never offers them a way to type or select a different one.
+//
+// HONEST LIMITATION: this whole app authenticates with app-managed PINs
+// stored in a shared client-readable table, not real per-user backend
+// accounts — there is no server-side session to attach a Postgres Row
+// Level Security policy to. The separation above is enforced at the data
+// and UI layer (every read/write is keyed by alliance tag, and the alliance
+// tag is always taken from the signed-in member's own record, never from
+// free-form input), which is consistent with how every other permission in
+// this app already works, but it is not a substitute for real backend
+// authorization. If you need that guarantee, put Alliance Championship data
+// in its own Supabase table (not `app_state`) with RLS policies keyed to a
+// real Supabase Auth session per alliance — see README.md.
 // ---------------------------------------------------------------------------
 const LANE_KEYS = ["left", "middle", "right"];
 const LANE_LABELS = { left: "LEFT", middle: "MIDDLE", right: "RIGHT" };
@@ -655,11 +691,75 @@ const PRIMARY_PAIR_LANES = {
   middle_right: ["middle", "right"],
 };
 
-const DEFAULT_CHAMPIONSHIP = {
-  players: [], // [{ id, name, power, needsReview: boolean }] — no rank/order-of-battle data is kept, only name + power
-  lanes: { left: [], middle: [], right: [] }, // arrays of player ids
-  primaryPair: "left_right", // key into PRIMARY_PAIR_LANES — which two lanes get maxed to 20/20
-};
+// One alliance's Championship dataset shape. Not called DEFAULT_CHAMPIONSHIP
+// any more since "the" championship data no longer exists — only ever one
+// per alliance tag — but kept as a factory function (not a shared object
+// literal) so nothing accidentally mutates a single shared instance.
+function defaultChampionshipData() {
+  return {
+    players: [], // [{ id, name, power, needsReview: boolean }] — no rank/order-of-battle data is kept, only name + power
+    lanes: { left: [], middle: [], right: [] }, // arrays of player ids
+    primaryPair: "left_right", // key into PRIMARY_PAIR_LANES — which two lanes get maxed to 20/20
+  };
+}
+
+// See the big comment above Store.championship's getter — converts the
+// pre-alliance-scoping single-object shape into the map shape without
+// exposing that old roster under any real alliance tag.
+function migrateLegacyChampionshipShape(raw) {
+  if (raw && Array.isArray(raw.players)) {
+    return { __legacy_unscoped__: raw };
+  }
+  return raw && typeof raw === "object" ? raw : {};
+}
+
+// Deep-copied read of one alliance's dataset (or a fresh empty one if that
+// alliance has never saved a plan yet) — callers get their own copy to
+// mutate freely without touching Store.championship until they explicitly
+// save it back.
+function getChampionshipForAlliance(allianceTag) {
+  const map = Store.championship;
+  const saved = allianceTag ? map[allianceTag] : null;
+  if (!saved) return defaultChampionshipData();
+  return {
+    players: (saved.players || []).map((p) => ({ ...p })),
+    lanes: {
+      left: [...(saved.lanes?.left || [])],
+      middle: [...(saved.lanes?.middle || [])],
+      right: [...(saved.lanes?.right || [])],
+    },
+    primaryPair: saved.primaryPair || "left_right",
+  };
+}
+
+// Writes ONLY this alliance's slice of the map, leaving every other
+// alliance's dataset in Store.championship completely untouched.
+function setChampionshipForAlliance(allianceTag, data) {
+  if (!allianceTag) return;
+  const map = { ...Store.championship };
+  map[allianceTag] = data;
+  Store.championship = map;
+}
+
+// Resets one alliance's dataset back to empty (Clear Championship Plan) —
+// again, every other alliance's entry in the map is untouched.
+function clearChampionshipForAlliance(allianceTag) {
+  if (!allianceTag) return;
+  const map = { ...Store.championship };
+  delete map[allianceTag];
+  Store.championship = map;
+}
+
+// Total players imported across EVERY alliance's Championship dataset —
+// purely an informational count for the home-page card; never exposes
+// which alliance any of those players belong to.
+function championshipTotalPlayersImported() {
+  const map = Store.championship;
+  return Object.keys(map).reduce((sum, tag) => {
+    if (tag === "__legacy_unscoped__") return sum;
+    return sum + ((map[tag] && map[tag].players) ? map[tag].players.length : 0);
+  }, 0);
+}
 
 // Accepts "185,000,000", "185M", "185.4M", "1.2B", "500K", or a bare
 // integer, and returns a plain number — or null if it doesn't look like a
@@ -779,6 +879,170 @@ function parseChampionshipOcrText(text) {
     });
   }
   return rows;
+}
+
+// ---------------------------------------------------------------------------
+// Dataset import (paste or .csv upload) — an alternative to the screenshot
+// OCR importer above, using the exact same "Gamer Name + Power only" model.
+// Expected format is a simple two-column CSV with a header row:
+//   name,power
+//   oakleygirl,1169
+// Column order doesn't matter (found by header name, case-insensitive) and
+// a stray header-less paste falls back to column order [name, power].
+// ---------------------------------------------------------------------------
+
+// Minimal CSV line splitter — handles a double-quoted field (with "" as an
+// escaped quote inside it) so a name that happens to contain a comma can
+// still be quoted, without pulling in a full CSV library for two columns.
+function splitCsvLine(line) {
+  const out = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (line[i + 1] === '"') { cur += '"'; i++; }
+        else inQuotes = false;
+      } else {
+        cur += c;
+      }
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ",") {
+      out.push(cur);
+      cur = "";
+    } else {
+      cur += c;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+// Parses pasted or uploaded CSV text into raw rows: { name, power,
+// invalidReason: string|null }. Gamer names are preserved exactly as
+// entered (only surrounding whitespace is trimmed) — full Unicode, spaces,
+// apostrophes, underscores, accents, and every other character some through
+// completely untouched. This does NOT dedupe or check for conflicts against
+// the existing roster — see buildChampionshipImportPreview for that, which
+// runs across combined dataset + existing players.
+function parseChampionshipDataset(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .filter((l) => l.trim() !== ""); // blank rows are ignored entirely, not flagged
+  if (!lines.length) return { rowsRead: 0, rows: [] };
+
+  const header = splitCsvLine(lines[0]).map((h) => h.trim().toLowerCase());
+  const headerNameIdx = header.indexOf("name");
+  const headerPowerIdx = header.indexOf("power");
+  const hasRecognizedHeader = headerNameIdx !== -1 && headerPowerIdx !== -1;
+  const nameIdx = hasRecognizedHeader ? headerNameIdx : 0;
+  const powerIdx = hasRecognizedHeader ? headerPowerIdx : 1;
+  const dataLines = hasRecognizedHeader ? lines.slice(1) : lines;
+
+  const rows = dataLines.map((line) => {
+    const cols = splitCsvLine(line);
+    const name = (cols[nameIdx] || "").trim();
+    const rawPower = (cols[powerIdx] || "").trim();
+    const power = rawPower ? parsePowerToken(rawPower) : null;
+    let invalidReason = null;
+    if (!name && !rawPower) invalidReason = "empty row";
+    else if (!name) invalidReason = "missing name";
+    else if (!rawPower) invalidReason = "missing power";
+    else if (power == null || power <= 0) invalidReason = "invalid power";
+    return { name, power: power == null ? 0 : power, invalidReason };
+  });
+  return { rowsRead: rows.length, rows };
+}
+
+// Builds the "Dataset Import Preview" — combines the freshly-parsed dataset
+// rows against `existingPlayers` (the alliance's CURRENT working roster,
+// which already includes anything from screenshots, a previous dataset
+// import, or manual entry — so this is what makes dataset + screenshot
+// imports "just work together" into one deduped list) and classifies every
+// row:
+//   - "invalid"  — unusable as parsed (missing name/power, bad power) —
+//                  still surfaced as its own row so it can be fixed or
+//                  removed before import, never silently dropped.
+//   - "conflict" — the gamer name already exists on the roster with a
+//                  DIFFERENT power — flagged "Power Conflict — Needs
+//                  Review" with a choice of which value to keep.
+//   - duplicate  — the gamer name already exists with the SAME power (or
+//                  appears more than once within this same paste/upload) —
+//                  counted but not shown as its own preview row, since
+//                  there's nothing to review.
+//   - "ready"    — a genuinely new, valid, unique player.
+// Two players are NEVER treated as the same just because they share a
+// power value — matching is name-first, power is only ever a secondary
+// check on an already-matched name.
+function buildChampionshipImportPreview(parsedRows, existingPlayers) {
+  const existingByKey = new Map(
+    (existingPlayers || [])
+      .filter((p) => p.name && p.name.trim())
+      .map((p) => [p.name.trim().toLowerCase(), p])
+  );
+  const seenThisBatch = new Set();
+  const rows = [];
+  let duplicatesRemoved = 0;
+  let conflicts = 0;
+  let invalidRows = 0;
+  let validPlayers = 0;
+
+  parsedRows.forEach((r) => {
+    if (r.invalidReason) {
+      invalidRows++;
+      rows.push({
+        tempId: newChampImportRowId(),
+        name: r.name,
+        power: r.power,
+        category: "invalid",
+        statusLabel: "Needs Review",
+        reason: r.invalidReason,
+      });
+      return;
+    }
+    const key = r.name.trim().toLowerCase();
+    if (seenThisBatch.has(key)) {
+      duplicatesRemoved++;
+      return;
+    }
+    const existing = existingByKey.get(key);
+    if (existing) {
+      seenThisBatch.add(key);
+      if (existing.power === r.power) {
+        duplicatesRemoved++;
+        return;
+      }
+      conflicts++;
+      rows.push({
+        tempId: newChampImportRowId(),
+        name: r.name,
+        power: r.power,
+        existingPower: existing.power,
+        chosenPower: existing.power, // default to keeping what's already saved
+        category: "conflict",
+        statusLabel: "Power Conflict — Needs Review",
+      });
+      return;
+    }
+    seenThisBatch.add(key);
+    validPlayers++;
+    rows.push({
+      tempId: newChampImportRowId(),
+      name: r.name,
+      power: r.power,
+      category: "ready",
+      statusLabel: "Ready",
+    });
+  });
+
+  rows.sort((a, b) => (b.power || 0) - (a.power || 0));
+  return { rowsRead: parsedRows.length, validPlayers, duplicatesRemoved, conflicts, invalidRows, rows };
+}
+
+function newChampImportRowId() {
+  return "ci_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
 // Splits `items` (each { id, power }, any order) into two groups, each

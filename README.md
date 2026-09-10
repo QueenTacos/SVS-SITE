@@ -227,17 +227,48 @@ dialog) before doing anything, and does nothing if that's cancelled.
 
 ### Alliance Championship lane planner
 
-**Championship** (`#/championship`) — an `admin`-only tool (same gate as
-SCHEDULE and Admin — officers and regular members see a "leadership only"
-message instead) for splitting the Alliance Championship roster into three
-balanced lanes. It's a completely separate data set from everything else on
-the site: its own `Store.championship` key, its own roster of "players"
-(just a Gamer Name and a Troop Power — nothing else) that has nothing to do
-with member accounts, logins, PINs, or bag data. Clearing or editing it
-never touches `Store.members`, `Store.bagSubmissions`, `Store.bagDrafts`, or
-`Store.schedule`, and vice versa.
+**Championship** (`#/championship`) — an `admin`-**or**-`officer` (R4) tool
+(regular members see a "leadership only" message instead) for splitting the
+Alliance Championship roster into three balanced lanes. It's a completely
+separate data set from everything else on the site: its own
+`Store.championship` key, its own roster of "players" (just a Gamer Name and
+a Power — nothing else) that has nothing to do with member accounts, logins,
+PINs, or bag data. Clearing or editing it never touches `Store.members`,
+`Store.bagSubmissions`, `Store.bagDrafts`, or `Store.schedule`, and vice
+versa.
 
-The workflow matches the four steps on the page, top to bottom:
+**Every alliance's dataset is completely separate.** `Store.championship` is
+a map keyed by alliance tag (`{ SYP: {...}, SUN: {...}, ... }`), not one
+shared roster — SYP's imported players, lane assignments, and primary-lane
+choice are invisible to SUN, LIT, NEM, and any other alliance, and vice
+versa. An R4/officer is hard-locked to their own member record's alliance
+tag: there's no dropdown, field, or other way for them to view or edit
+another alliance's data, and their alliance is always read from their own
+signed-in account, never typed in. A full `admin` isn't tied to one
+alliance in this app (the standing admin login has no alliance at all), so
+they instead get a **VIEWING ALLIANCE** picker at the top of the page —
+switching it swaps `champWorking` to load that alliance's saved plan, and
+Save/Clear always act on whichever alliance is currently selected (both
+buttons are labeled with the alliance tag so it's never ambiguous which
+dataset a click affects). If an R4 signs in with no alliance tag set, or no
+alliance tags exist yet, the page shows a message telling them what to fix
+instead of guessing.
+
+Worth being upfront about: this separation is enforced at the app's data and
+UI layer — every read/write is keyed by alliance tag, and the tag always
+comes from the signed-in member's own record — consistent with how every
+other permission in this app already works (plain PINs in a shared,
+client-readable table, no real backend sessions). It is **not** backed by a
+database-level access-control policy, because this app has no per-user
+backend session to attach one to. If you need that stronger guarantee,
+move Championship data into its own Supabase table (not the shared
+`app_state` table this app otherwise uses) with Row Level Security policies
+keyed to a real Supabase Auth session per alliance.
+
+The player list can be built two ways, and they feed the exact same
+alliance-scoped roster — screenshots and a pasted/uploaded dataset can be
+mixed freely, and a player is never duplicated just because they showed up
+through both:
 
 1. **Upload Screenshots** — pick one or more screenshots of the in-game
    "Order of Battle" lane list (Info → Left/Middle/Right Lane) and hit
@@ -279,17 +310,56 @@ The workflow matches the four steps on the page, top to bottom:
    matter. A stats strip above the table reports **Screenshots Processed**,
    **Unique Players Found**, **Duplicates Removed**, and **Needs Review**
    for the current session.
-2. **Player list — review & correct** — every imported (or manually added)
+2. **Import Dataset** — the other way to add players: switch the pill toggle
+   above the import panel from UPLOAD SCREENSHOTS to IMPORT DATASET, then
+   either paste CSV-style text into **Paste Player Dataset** or choose a
+   `.csv` file — both use the same simple two-column format, a `name,power`
+   header followed by one row per player (`oakleygirl,1169`). The header's
+   `name`/`power` columns are matched by name (case-insensitive) so column
+   order doesn't matter; a paste with no recognizable header at all falls
+   back to assuming `[name, power]` column order. Gamer names are kept
+   byte-for-byte as typed — full Unicode, spaces, apostrophes, underscores,
+   accents, and any other character are never altered, translated, or
+   simplified.
+
+   Clicking **Preview Import** parses the dataset and shows a **Dataset
+   Import Preview** before anything is added to the real roster — nothing
+   is committed until you click **Import Players** (or discarded by
+   clicking **Cancel**). The preview reports Rows Read, Valid Players,
+   Duplicates Removed, Conflicts, and Invalid Rows, then lists every row
+   that needs a look:
+   - **Ready** — a genuinely new, valid player, about to be added as-is.
+   - **Needs Review** — the row couldn't be parsed (missing name, missing
+     power, or a power value that isn't a number) — edit it inline or
+     click **remove** to drop it from the import; a row left as-is still
+     imports, flagged Needs Review in the main table just like an
+     unconfident screenshot read.
+   - **Power Conflict — Needs Review** — this Gamer Name already exists on
+     the alliance's roster (from a screenshot, an earlier dataset import,
+     or manual entry) with a *different* power. A dropdown lets you choose
+     **Keep existing** or **Use imported**; whichever you pick is what's
+     applied to that one existing player record on Import — this never
+     creates a second row for the same person.
+
+   A row whose name matches an existing player AND whose power matches
+   exactly is treated as a plain duplicate — it's counted in "Duplicates
+   Removed" but doesn't get its own preview row, since there's nothing to
+   review. As with screenshots, two different players are never merged
+   just because they happen to share the same power value — matching is
+   always by Gamer Name first, power is only ever a secondary check on an
+   already-matched name.
+3. **Player list — review & correct** — every imported (or manually added)
    player shows up in an editable table (Gamer Name, Troop Power, Status),
    sorted strongest-to-weakest. A row shows a **NEEDS REVIEW** badge until
    both its name and power are valid, and **CONFIRMED** once they are —
    editing either field re-checks it live, so fixing a flagged row clears
-   the badge immediately. Admins can fix a misread name or power value
+   the badge immediately. Admins/R4s can fix a misread name or power value
    directly in the row (power accepts the same `185M` / `1.2B` shorthand as
-   the OCR step), delete a bad read, or use **+ Add Player** to type someone
-   in by hand — useful for anyone the OCR missed entirely, or for skipping
-   screenshots altogether.
-3. **Primary lanes + Balance Lanes** — pick which two lanes (Left+Right,
+   the OCR step), delete a bad read, or use **+ Add Player Manually** (at
+   the top of the import area, or **+ Add Player** in this table — both do
+   the same thing) to type someone in by hand — useful for anyone missed
+   entirely, or for skipping imports altogether.
+4. **Primary lanes + Balance Lanes** — pick which two lanes (Left+Right,
    Left+Middle, or Middle+Right — Left+Right is the default) get filled to
    a maxed 20/20 using the strongest players, then click **Balance Lanes**.
    This takes the top 40 players by power, splits them across the two
@@ -301,20 +371,22 @@ The workflow matches the four steps on the page, top to bottom:
    three lanes side by side (player count, total power, and the roster),
    plus the power difference between the two primary lanes so it's obvious
    at a glance how even the split came out.
-4. **Manual adjustments** — after balancing, drag any player row onto
+5. **Manual adjustments** — after balancing, drag any player row onto
    another player's row to swap the two between lanes (or between a lane
    and the Unassigned panel), or onto a lane's empty area to move them
    there outright — a lane refuses a drop once it's at 20/20. Every move
    instantly recalculates each lane's count, total power, and the primary
    lanes' power difference.
 
-Nothing here saves automatically. **Save Championship Plan** writes the
-current roster and lane assignments to `Store.championship` (surviving a
-refresh, tab close, or Supabase sync to other admins, exactly like every
-other Store key); until it's clicked, an "Unsaved changes" note shows next
-to the button. **Clear Championship Plan** asks for confirmation, then
-wipes the imported roster and lane assignments back to empty — it does not
-touch any member, bag, PIN, or schedule data.
+Nothing here saves automatically. **Save `<ALLIANCE>` Championship Plan**
+writes the current roster and lane assignments to that alliance's slice of
+`Store.championship` (surviving a refresh, tab close, or Supabase sync to
+other admins/R4s of the same alliance, exactly like every other Store key);
+until it's clicked, an "Unsaved changes" note shows next to the button.
+**Clear `<ALLIANCE>` Championship Plan** asks for confirmation, then wipes
+that one alliance's imported roster and lane assignments back to empty — it
+does not touch any member, bag, PIN, or schedule data, and it does not touch
+any other alliance's Championship data either.
 
 ### Admins editing a member's bag
 
