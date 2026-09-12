@@ -1289,6 +1289,19 @@ function upsertSvsSignup(playerId, patch) {
   return record;
 }
 
+// Removes a player's SVS Battle Sign Up submission entirely (Admin →
+// SVS Alliance Signups → Delete, and the "Clear Bag"/"Clear All Bags"
+// resets below) — never touches the member's account, gamer profile, PIN,
+// or preferred language, only this one event-specific record. A no-op if
+// the player has no signup on file.
+function deleteSvsSignup(playerId) {
+  if (!playerId) return;
+  if (!Store.svsSignups[playerId]) return;
+  const all = { ...Store.svsSignups };
+  delete all[playerId];
+  Store.svsSignups = all;
+}
+
 // Field-by-field validation, in the order the form presents them, so the
 // FIRST missing thing is always what gets reported back — matches the
 // spec's example messages exactly (e.g. "Please select your Marksman troop

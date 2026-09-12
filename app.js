@@ -873,6 +873,14 @@ let svsSignupSavedNotice = false;
 // Admin → SVS Alliance Signups table filters — { alliance, participation,
 // furnace, troop } — all "" (no filter) by default.
 let svsSignupAdminFilters = { alliance: "", participation: "", furnace: "", troop: "" };
+// When an admin clicks "Edit" on another player's SVS Battle Sign Up
+// submission (Admin → SVS Alliance Signups), this holds that member's id
+// and the signup form below edits/saves THEIR record instead of the
+// signed-in admin's own — same pattern as svsEditingMemberId for the bag
+// wizard above, kept as a separate variable since the two features are
+// entirely independent and an admin could in principle be mid-edit on one
+// member's bag and a different member's signup at the same time.
+let svsSignupEditingMemberId = null;
 // Admin → Members table's "Preferred Language" filter (module-level so it
 // survives the table re-rendering on every other edit, same pattern as
 // svsSignupAdminFilters above). "" = All Languages.
@@ -891,6 +899,23 @@ function svsWizardTargetUser() {
     const m = Store.members.find((mm) => mm.id === svsEditingMemberId);
     if (m) return m;
     svsEditingMemberId = null; // target member was deleted mid-edit
+  }
+  return Store.currentUser;
+}
+
+// Same idea as svsWizardTargetUser() above, for the separate SVS Battle
+// Sign Up form (svsSignupEditingMemberId, not svsEditingMemberId) — same
+// admin-only gating (canEditMemberBag) since editing another player's
+// data on their behalf is the same trust level either way.
+function svsSignupWizardTargetUser() {
+  if (svsSignupEditingMemberId) {
+    if (!canEditMemberBag(Store.currentUser)) {
+      svsSignupEditingMemberId = null;
+      return Store.currentUser;
+    }
+    const m = Store.members.find((mm) => mm.id === svsSignupEditingMemberId);
+    if (m) return m;
+    svsSignupEditingMemberId = null; // target member was deleted mid-edit
   }
   return Store.currentUser;
 }
@@ -1688,21 +1713,38 @@ function renderSvsSignupPage(el) {
 }
 
 function renderSvsSignupForm(el) {
-  const user = Store.currentUser;
-  if (!user) return svsGate(el, t("svsSignupPage.gateComplete"));
+  // Sign-in is always checked against the actually-logged-in user — an
+  // admin mid-edit of someone else's signup never bypasses this. `user`
+  // below is the record actually being read/saved, which is the target
+  // member when svsSignupEditingMemberId is set (admin editing on their
+  // behalf) and the signed-in player otherwise — see
+  // svsSignupWizardTargetUser().
+  if (!Store.currentUser) return svsGate(el, t("svsSignupPage.gateComplete"));
+  const user = svsSignupWizardTargetUser();
   if (!svsSignupDraft) svsSignupDraft = svsSignupBlankFromAccount(user);
   const existing = getSvsSignup(user.id);
   const open = Store.svsSignupsOpen;
   const alliances = Store.alliances;
   const furnaceOptions = SVS_SIGNUP_FURNACE_LEVELS;
   const v = svsSignupDraft;
-  const disabled = !open;
+  // An admin editing another player's signup on their behalf can always
+  // save, regardless of the global open/closed toggle — that toggle gates
+  // regular members submitting their OWN signup, not admin corrections.
+  const disabled = !open && !svsSignupEditingMemberId;
   const buildingOptions = svsSignupAvailableBuildingLevels();
 
   el.innerHTML = `
+    ${
+      svsSignupEditingMemberId
+        ? `<div class="panel" style="background:rgba(255,176,32,.1);border-color:var(--accent-amber);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+            <span style="font-size:12px;color:var(--accent-amber);">✎ Editing <strong>${escapeHtml(user.name)}</strong>'s SVS Battle Sign Up as admin</span>
+            <button class="btn small" id="exitSignupEdit">Exit editing</button>
+          </div>`
+        : ""
+    }
     <div class="panel">
       ${
-        !open
+        !open && !svsSignupEditingMemberId
           ? `<div class="empty" style="margin-bottom:14px;">Signups are currently closed.${existing ? " Your last submitted signup is shown below (read-only)." : " Check back once an admin opens signups."}</div>`
           : ""
       }
@@ -1785,6 +1827,16 @@ function renderSvsSignupForm(el) {
       ${existing ? `<p style="font-size:11px;color:var(--text-faint);margin-top:10px;">Last saved ${new Date(existing.updatedAt).toLocaleString()}.</p>` : ""}
     </div>
   `;
+
+  if (svsSignupEditingMemberId) {
+    el.querySelector("#exitSignupEdit").onclick = () => {
+      svsSignupEditingMemberId = null;
+      svsSignupDraft = null;
+      svsSignupError = "";
+      svsSignupSavedNotice = false;
+      navigate("/admin");
+    };
+  }
 
   if (disabled) return;
 
@@ -2513,12 +2565,15 @@ function renderSvsSignupAdminPanelHtml(user, officerScoped) {
       </div>
       <div style="overflow-x:auto;">
         <table>
-          <thead><tr><th>GAMER NAME</th><th>GAMER ID</th><th>ALLIANCE</th><th>FURNACE / FC</th><th>INFANTRY TROOP</th><th>INFANTRY BUILDING</th><th>LANCER TROOP</th><th>LANCER BUILDING</th><th>MARKSMAN TROOP</th><th>MARKSMAN BUILDING</th><th>SVS CHOICE</th></tr></thead>
+          <thead><tr><th>GAMER NAME</th><th>GAMER ID</th><th>ALLIANCE</th><th>FURNACE / FC</th><th>INFANTRY TROOP</th><th>INFANTRY BUILDING</th><th>LANCER TROOP</th><th>LANCER BUILDING</th><th>MARKSMAN TROOP</th><th>MARKSMAN BUILDING</th><th>SVS CHOICE</th><th>ACTIONS</th></tr></thead>
           <tbody>
             ${
               rows
                 .map((r) => {
                   const choiceLabel = SVS_PARTICIPATION_OPTIONS.find((o) => o.value === r.svsParticipation)?.label || r.svsParticipation || "—";
+                  const actionsCell = canEditMemberBag(user)
+                    ? `<td style="white-space:nowrap;"><button data-sedit="${r.playerId}" class="btn small">Edit</button> <button data-sdel="${r.playerId}" class="btn small" style="border-color:var(--accent-red);color:var(--accent-red);">Delete</button></td>`
+                    : `<td><span style="font-size:10.5px;color:var(--text-faint);" title="Only the admin role can edit or delete a signup">admin only</span></td>`;
                   return `<tr>
                     <td>${escapeHtml(r.gamerName || "—")}</td>
                     <td>${escapeHtml(r.gamerId || "—")}</td>
@@ -2531,9 +2586,10 @@ function renderSvsSignupAdminPanelHtml(user, officerScoped) {
                     <td>${escapeHtml(r.troops?.marksman?.troopLevel || "—")}</td>
                     <td>${escapeHtml(r.troops?.marksman?.buildingLevel || "—")}</td>
                     <td>${escapeHtml(choiceLabel)}</td>
+                    ${actionsCell}
                   </tr>`;
                 })
-                .join("") || `<tr><td colspan="11">No signups match these filters.</td></tr>`
+                .join("") || `<tr><td colspan="12">No signups match these filters.</td></tr>`
             }
           </tbody>
         </table>
@@ -2562,6 +2618,36 @@ function wireSvsSignupAdminPanel(el, user, officerScoped) {
   el.querySelector("#admSignupFTroop")?.addEventListener("change", (e) => {
     svsSignupAdminFilters = { ...svsSignupAdminFilters, troop: e.target.value };
     renderAdmin(el);
+  });
+
+  // Admin-only Edit/Delete actions on individual SVS Battle Sign Up
+  // submissions (spec: "UPDATE SVS BATTLE SIGN UP ADMIN CONTROLS" #1/#2/#8).
+  // Edit opens the *existing* submission via the same admin-edits-on-behalf
+  // pattern already used for the Bag Wizard (svsSignupEditingMemberId /
+  // svsSignupWizardTargetUser) — never creates a duplicate. Delete removes
+  // only the SVS signup record (deleteSvsSignup), never the member account,
+  // bag, or profile, and refreshes the admin view live with no page reload.
+  el.querySelectorAll("[data-sedit]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (!canEditMemberBag(Store.currentUser)) return;
+      svsSignupEditingMemberId = btn.dataset.sedit;
+      svsSignupDraft = null;
+      svsSignupError = "";
+      svsSignupSavedNotice = false;
+      navigate("/svs-signup");
+    });
+  });
+  el.querySelectorAll("[data-sdel]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (!canEditMemberBag(Store.currentUser)) return;
+      if (!confirm("Delete this SVS Battle Sign Up submission?")) return;
+      deleteSvsSignup(btn.dataset.sdel);
+      if (svsSignupEditingMemberId === btn.dataset.sdel) {
+        svsSignupEditingMemberId = null;
+        svsSignupDraft = null;
+      }
+      renderAdmin(el);
+    });
   });
 }
 
@@ -3059,7 +3145,7 @@ function renderAdmin(el) {
   // confirmation below since this is a state-wide, irreversible action.
   el.querySelector("#admClearBags")?.addEventListener("click", () => {
     const confirmed = confirm(
-      "Are you sure you want to clear ALL member bags? This will permanently remove all current bag entries, submissions, saved drafts, points, and selected time slots for every member. Member accounts and profile information will NOT be deleted."
+      "Are you sure you want to clear ALL member bags? This will permanently remove all current bag entries, submissions, saved drafts, points, selected time slots, and SVS Battle Sign Up submissions for every member. Member accounts and profile information will NOT be deleted."
     );
     if (!confirmed) return;
 
@@ -3072,6 +3158,18 @@ function renderAdmin(el) {
     // read-modify-write mutating the shared seed data itself.
     Store.schedule = SEED_SCHEDULE_DAYS.reduce((acc, day) => { acc[day] = emptySlots(); return acc; }, {});
     Store.schedulePublished = SEED_SCHEDULE_DAYS.reduce((acc, day) => { acc[day] = false; return acc; }, {});
+    // SVS Battle Sign Up is event/submission data too, same as the bag —
+    // a fresh SvS cycle should start with a clean signup slate. Never
+    // touches member accounts/profiles (see deleteSvsSignup comment).
+    Store.svsSignups = {};
+    // A stale in-progress signup edit (this admin's own draft, or one
+    // they were mid-way through on a member's behalf) would otherwise
+    // silently resurrect a just-cleared record the moment it's next
+    // opened, since svsSignupDraft only reloads from storage when null.
+    svsSignupDraft = null;
+    svsSignupError = "";
+    svsSignupSavedNotice = false;
+    svsSignupEditingMemberId = null;
 
     // Drop any in-progress MY BAG wizard state (this admin's own, or one
     // they're editing on a member's behalf), and cancel any debounced
