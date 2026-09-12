@@ -27,6 +27,47 @@ const DEFAULT_STATE = {
   version: "v0.1.0",
 };
 
+// Preferred Language — a single reusable USER PROFILE field (member.
+// preferredLanguage), NOT a separate value per feature. Create Account, the
+// logged-in user's own Account settings, and Admin's member editor all read
+// and write this exact same list/field — see SUPPORTED_LANGUAGES below,
+// renderSignUpPane (create account), openMyAccount (self-service), and the
+// Admin → Members table's "LANGUAGE" column in app.js. The stored value is
+// always the stable `code` (e.g. "pt"), never the display text — codes are
+// what's safe to branch on later for translation/communication/filtering
+// features. `label` is the language's own native name (used everywhere a
+// player picks their own language); `englishName` is only for Admin-facing
+// display/filtering, where English readability matters more than native
+// script (see SUPPORTED REQUIREMENT #6). Arabic is flagged RTL for when
+// full UI localization lands later (see #10) — not used yet.
+const SUPPORTED_LANGUAGES = [
+  { code: "en", label: "English", englishName: "English" },
+  { code: "es", label: "Español", englishName: "Spanish" },
+  { code: "pt", label: "Português", englishName: "Portuguese" },
+  { code: "fr", label: "Français", englishName: "French" },
+  { code: "de", label: "Deutsch", englishName: "German" },
+  { code: "pl", label: "Polski", englishName: "Polish" },
+  { code: "ru", label: "Русский", englishName: "Russian" },
+  { code: "tr", label: "Türkçe", englishName: "Turkish" },
+  { code: "ro", label: "Română", englishName: "Romanian" },
+  { code: "id", label: "Bahasa Indonesia", englishName: "Indonesian" },
+  { code: "ja", label: "日本語", englishName: "Japanese" },
+  { code: "ko", label: "한국어", englishName: "Korean" },
+  { code: "zh-Hans", label: "中文（简体）", englishName: "Chinese (Simplified)", rtl: false },
+  { code: "ar", label: "العربية", englishName: "Arabic", rtl: true },
+];
+const DEFAULT_LANGUAGE_CODE = "en";
+
+// Safe lookups for anywhere a member's preferredLanguage needs to become
+// display text — never assume the field is present (see EXISTING USERS /
+// safe-migration note below), so every caller falls back to English rather
+// than showing a blank or a raw undefined.
+function languageInfo(code) {
+  return SUPPORTED_LANGUAGES.find((l) => l.code === code) || SUPPORTED_LANGUAGES.find((l) => l.code === DEFAULT_LANGUAGE_CODE);
+}
+function languageNativeLabel(code) { return languageInfo(code).label; }
+function languageEnglishName(code) { return languageInfo(code).englishName; }
+
 // A standing admin login that's always there, even on a brand-new install
 // and even if someone later deletes every other member — a permanent
 // leadership backdoor into the app itself. `permanent: true` is what the
@@ -44,6 +85,7 @@ const PERMANENT_ADMIN_MEMBER = {
   role: "admin",
   pin: "2652",
   permanent: true,
+  preferredLanguage: DEFAULT_LANGUAGE_CODE,
 };
 
 // Roster — replace with your real alliance & player names, or manage this
@@ -55,9 +97,9 @@ const PERMANENT_ADMIN_MEMBER = {
 // swap these for real PINs (or replace the accounts entirely) before
 // sharing this with your alliance.
 const SEED_MEMBERS = [
-  { id: "m1", name: "Chief Falcon", gamerId: "10293847", alliance: "SUN", role: "admin", pin: "1111" },
-  { id: "m2", name: "Nightshade", gamerId: "58201934", alliance: "SYP", role: "officer", pin: "2222" },
-  { id: "m3", name: "IronWolf", gamerId: "74920185", alliance: "LIT", role: "member", pin: "3333" },
+  { id: "m1", name: "Chief Falcon", gamerId: "10293847", alliance: "SUN", role: "admin", pin: "1111", preferredLanguage: "en" },
+  { id: "m2", name: "Nightshade", gamerId: "58201934", alliance: "SYP", role: "officer", pin: "2222", preferredLanguage: "en" },
+  { id: "m3", name: "IronWolf", gamerId: "74920185", alliance: "LIT", role: "member", pin: "3333", preferredLanguage: "en" },
   PERMANENT_ADMIN_MEMBER,
 ];
 

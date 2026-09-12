@@ -74,7 +74,7 @@ function renderShell() {
       <div class="topbar-group">
         ${
           user
-            ? `<div class="who"><span class="user-chip">◇ ${escapeHtml(user.name)}</span><button id="signOutBtn">SIGN OUT</button></div>`
+            ? `<div class="who"><span class="user-chip">◇ ${escapeHtml(user.name)}</span><button id="myAccountBtn">MY ACCOUNT</button><button id="signOutBtn">SIGN OUT</button></div>`
             : `<button class="signin" id="signInBtn">◇ SIGN IN</button>`
         }
       </div>
@@ -88,6 +88,7 @@ function renderShell() {
     </nav>
   `;
   document.getElementById("signInBtn")?.addEventListener("click", openSignIn);
+  document.getElementById("myAccountBtn")?.addEventListener("click", openMyAccount);
   document.getElementById("signOutBtn")?.addEventListener("click", () => {
     // Flush any pending debounced draft save first — svsWizardTargetUser()
     // (and so the draft's owner id) can no longer be resolved once
@@ -249,6 +250,10 @@ function renderSignUpPane(pane, overlay) {
       ${Store.alliances.map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join("")}
     </select>
     <input id="suGamerId" placeholder="Gamer ID..." />
+    <select id="suLanguage">
+      <option value="" disabled selected>Select language...</option>
+      ${SUPPORTED_LANGUAGES.map((l) => `<option value="${l.code}">${escapeHtml(l.label)} — ${escapeHtml(l.englishName)}</option>`).join("")}
+    </select>
     <input id="suPin" placeholder="Create a 4-digit PIN..." inputmode="numeric" maxlength="4" style="letter-spacing:.3em;" />
     <div id="suErr" style="color:var(--accent-red);font-size:11.5px;margin-top:-4px;min-height:28px;"></div>
     <button class="btn primary" id="suGo" style="width:100%;">Create account</button>
@@ -262,11 +267,13 @@ function renderSignUpPane(pane, overlay) {
     const name = pane.querySelector("#suName").value.trim();
     const alliance = pane.querySelector("#suAlliance").value.trim();
     const gamerId = pane.querySelector("#suGamerId").value.trim();
+    const preferredLanguage = pane.querySelector("#suLanguage").value;
     const pin = pinInput.value.trim();
     errEl.textContent = "";
     if (!name) { errEl.textContent = "Enter your gamer name."; return; }
     if (!alliance) { errEl.textContent = "Select your alliance."; return; }
     if (!gamerId) { errEl.textContent = "Enter your Gamer ID."; return; }
+    if (!preferredLanguage) { errEl.textContent = "Select your preferred language."; return; }
     if (!/^\d{4}$/.test(pin)) { errEl.textContent = "PIN must be exactly 4 digits."; return; }
 
     const members = Store.members;
@@ -277,7 +284,7 @@ function renderSignUpPane(pane, overlay) {
       return;
     }
 
-    const member = { id: "m" + Date.now(), name, gamerId, alliance, role: "member", pin };
+    const member = { id: "m" + Date.now(), name, gamerId, alliance, role: "member", pin, preferredLanguage };
     Store.members = [...members, member];
     Store.currentUser = member;
     overlay.remove();
@@ -286,6 +293,57 @@ function renderSignUpPane(pane, overlay) {
   };
   pane.querySelector("#suGo").onclick = go;
   pinInput.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+}
+
+// ---------------------------------------------------------------------------
+// MY ACCOUNT — self-service profile settings for a logged-in member.
+// Preferred Language lives on the member's existing profile record
+// (member.preferredLanguage), the same field Create Account writes and the
+// same field Admin's member editor writes — this is just a third door onto
+// that one value, never a separate copy. Gamer Name / Alliance are shown
+// for context only; this panel doesn't touch them.
+// ---------------------------------------------------------------------------
+function openMyAccount() {
+  const user = Store.currentUser;
+  if (!user) return;
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  const current = user.preferredLanguage || DEFAULT_LANGUAGE_CODE;
+  overlay.innerHTML = `
+    <div class="modal">
+      <button class="close">&times;</button>
+      <h3>My Account</h3>
+      <p style="color:var(--text-faint);font-size:11px;letter-spacing:1px;margin:14px 0 2px;">GAMER NAME</p>
+      <p style="font-size:13px;margin:0;">${escapeHtml(user.name)}</p>
+      <p style="color:var(--text-faint);font-size:11px;letter-spacing:1px;margin:14px 0 2px;">ALLIANCE</p>
+      <p style="font-size:13px;margin:0;">${escapeHtml(user.alliance || "—")}</p>
+      <div class="field" style="margin-top:14px;">
+        <label>PREFERRED LANGUAGE</label>
+        <select id="maLanguage" style="width:100%;">
+          ${SUPPORTED_LANGUAGES.map((l) => `<option value="${l.code}" ${current === l.code ? "selected" : ""}>${escapeHtml(l.label)} — ${escapeHtml(l.englishName)}</option>`).join("")}
+        </select>
+      </div>
+      <div id="maMsg" style="font-size:11.5px;color:var(--accent-green);min-height:18px;margin-top:6px;"></div>
+      <button class="btn primary" id="maSave" style="width:100%;">Save changes</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector(".close").onclick = () => overlay.remove();
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  overlay.querySelector("#maSave").addEventListener("click", () => {
+    const preferredLanguage = overlay.querySelector("#maLanguage").value;
+    const members = Store.members;
+    const idx = members.findIndex((m) => m.id === user.id);
+    if (idx === -1) { overlay.remove(); return; }
+    members[idx] = { ...members[idx], preferredLanguage };
+    Store.members = members;
+    Store.currentUser = members[idx];
+    overlay.querySelector("#maMsg").textContent = "Saved.";
+    // Nothing else on screen depends on preferredLanguage yet, so a full
+    // renderShell()/router() re-render isn't needed here — just keep
+    // Store.currentUser in sync (done above) so the next page/save sees it.
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -808,6 +866,10 @@ let svsSignupSavedNotice = false;
 // Admin → SVS Alliance Signups table filters — { alliance, participation,
 // furnace, troop } — all "" (no filter) by default.
 let svsSignupAdminFilters = { alliance: "", participation: "", furnace: "", troop: "" };
+// Admin → Members table's "Preferred Language" filter (module-level so it
+// survives the table re-rendering on every other edit, same pattern as
+// svsSignupAdminFilters above). "" = All Languages.
+let adminMemberLangFilter = "";
 
 function svsWizardTargetUser() {
   if (svsEditingMemberId) {
@@ -2608,11 +2670,21 @@ function renderAdmin(el) {
           ? `<p style="font-size:11.5px;color:var(--accent-amber);margin-top:-4px;">Showing ${escapeHtml(user.alliance || "your alliance")} only — R4s see their own alliance's roster, not the whole state.</p>`
           : ""
       }
+      <div class="field-row" style="margin-bottom:10px;">
+        <div class="field">
+          <label>PREFERRED LANGUAGE</label>
+          <select id="admMemberLangFilter">
+            <option value="" ${!adminMemberLangFilter ? "selected" : ""}>All Languages</option>
+            ${SUPPORTED_LANGUAGES.map((l) => `<option value="${l.code}" ${adminMemberLangFilter === l.code ? "selected" : ""}>${escapeHtml(l.englishName)}</option>`).join("")}
+          </select>
+        </div>
+      </div>
       <div style="overflow-x:auto;">
         <table>
-          <thead><tr><th>USER NAME</th><th>GAMER ID</th><th>ALLIANCE</th><th>RESET PIN</th><th>RANK</th><th></th></tr></thead>
+          <thead><tr><th>USER NAME</th><th>GAMER ID</th><th>ALLIANCE</th><th>LANGUAGE</th><th>RESET PIN</th><th>RANK</th><th></th></tr></thead>
           <tbody>
             ${members
+              .filter((m) => !adminMemberLangFilter || (m.preferredLanguage || DEFAULT_LANGUAGE_CODE) === adminMemberLangFilter)
               .map(
                 (m) => `
               <tr>
@@ -2624,6 +2696,15 @@ function renderAdmin(el) {
                     ${alliances.map((a) => `<option ${m.alliance === a ? "selected" : ""}>${escapeHtml(a)}</option>`).join("")}
                     ${m.alliance && !alliances.includes(m.alliance) ? `<option selected>${escapeHtml(m.alliance)}</option>` : ""}
                   </select>
+                </td>
+                <td>
+                  ${
+                    officerScoped
+                      ? `<span style="font-size:12px;color:var(--text-dim);" title="Only Admin can change a player's preferred language">${escapeHtml(languageEnglishName(m.preferredLanguage))}</span>`
+                      : `<select data-mfield="preferredLanguage" data-mid="${m.id}" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;">
+                          ${SUPPORTED_LANGUAGES.map((l) => `<option value="${l.code}" ${(m.preferredLanguage || DEFAULT_LANGUAGE_CODE) === l.code ? "selected" : ""}>${escapeHtml(l.englishName)}</option>`).join("")}
+                        </select>`
+                  }
                 </td>
                 <td>
                   ${
@@ -2653,7 +2734,7 @@ function renderAdmin(el) {
                 </td>
               </tr>`
               )
-              .join("") || `<tr><td colspan="6">No members yet.</td></tr>`}
+              .join("") || `<tr><td colspan="7">No members yet.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -2954,9 +3035,13 @@ function renderAdmin(el) {
     // needs that alliance from the start — otherwise it'd default blank and
     // immediately vanish from their filtered table.
     const alliance = officerScoped ? user.alliance || "" : "";
-    Store.members = [...Store.members, { id: "m" + Date.now(), name, gamerId, alliance, role: "member", pin }];
+    Store.members = [...Store.members, { id: "m" + Date.now(), name, gamerId, alliance, role: "member", pin, preferredLanguage: DEFAULT_LANGUAGE_CODE }];
     renderAdmin(el);
   };
+  el.querySelector("#admMemberLangFilter")?.addEventListener("change", (e) => {
+    adminMemberLangFilter = e.target.value;
+    renderAdmin(el);
+  });
   el.querySelector("#admClearSlots")?.addEventListener("click", () => {
     const sched = Store.schedule;
     Object.keys(sched).forEach((day) => sched[day].forEach((s) => (s.member = null)));
