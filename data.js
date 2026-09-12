@@ -15,6 +15,15 @@ const DEFAULT_STATE = {
   enemyState: "3897",
   svsDate: "2026-09-12",
   maxFurnaceLevel: "30",
+  // State Progression → Max Troop Building Level — a SEPARATE progression
+  // cap from maxFurnaceLevel above (a state can be FC5 furnace / FC4
+  // troop-building, or any other valid combination — never assumed equal).
+  // Controls how far the SVS Alliance Signup form's three Training Camp
+  // Level dropdowns extend — see SVS_SIGNUP_BUILDING_LEVELS_ALL and
+  // svsSignupAvailableBuildingLevels() further down this file. Defaults to
+  // the top of that list so a brand-new install isn't artificially capped
+  // until an admin actually sets one.
+  maxTroopBuildingLevel: "FC10",
   version: "v0.1.0",
 };
 
@@ -336,6 +345,8 @@ const PLANNED_TOOLS = [
     title: "bear_calculator",
     desc: "Bear Trap hit planner — squad comp, gear thresholds, hit timing.",
     color: "var(--accent-teal)",
+    icon: "paw",
+    tag: "ANALYTICS",
   },
 ];
 
@@ -377,6 +388,11 @@ const SUPABASE_SYNCED_DEFAULTS = {
   // map ({ [allianceTag]: { players, lanes, primaryPair } }) rather than a
   // single shared object.
   wos_championship: {},
+  // SVS Alliance Signup — { [playerId]: signupRecord }, one active signup
+  // per player. See the "SVS Alliance Signup" block further down this file.
+  wos_svs_signups: {},
+  // Admin-controlled — whether players can currently submit/edit a signup.
+  wos_svs_signups_open: true,
 };
 
 // ---------------------------------------------------------------------------
@@ -441,6 +457,8 @@ const Store = {
       this._set("wos_bag_submissions", {});
       this._set("wos_bag_drafts", {});
       this._set("wos_championship", {});
+      this._set("wos_svs_signups", {});
+      this._set("wos_svs_signups_open", true);
       this._set("wos_current_user", null);
       localStorage.setItem("wos_seeded_v2", "1");
     } else {
@@ -612,6 +630,15 @@ const Store = {
   set championship(v) {
     this._synced("wos_championship", {}).set(v);
   },
+
+  // { [playerId]: signupRecord } — see the "SVS Alliance Signup" block
+  // further down this file.
+  get svsSignups() { return this._synced("wos_svs_signups", {}).get(); },
+  set svsSignups(v) { this._synced("wos_svs_signups", {}).set(v); },
+
+  // Admin toggle — whether players can currently submit or edit a signup.
+  get svsSignupsOpen() { return this._synced("wos_svs_signups_open", true).get(); },
+  set svsSignupsOpen(v) { this._synced("wos_svs_signups_open", true).set(v); },
 
   // Always localStorage-only, Supabase or not — see the comment above
   // SUPABASE_SYNCED_DEFAULTS.
@@ -1129,4 +1156,121 @@ function computeBagPoints(values) {
   });
   const total = bySection.reduce((sum, s) => sum + s.points, 0);
   return { bySection, total };
+}
+
+// ---------------------------------------------------------------------------
+// SVS Alliance Signup — additive feature, entirely separate storage
+// (Store.svsSignups) from the bag planner, schedule, and Alliance
+// Championship. One record per player id — a player returning to the
+// signup tab loads and edits their existing record rather than creating a
+// second one (see getSvsSignup/upsertSvsSignup below). Alliance Tag is
+// deliberately NOT its own seed list here — it reuses Store.alliances (the
+// same admin-managed list the rest of the app already uses), so a
+// newly-added alliance shows up here automatically with zero extra wiring.
+// Furnace/FC Level and Troop Level, by contrast, use their OWN fixed lists
+// below (SVS_SIGNUP_FURNACE_LEVELS / SVS_SIGNUP_TROOP_LEVELS) — spec'd with
+// a different range than the bag planner's Store.furnaceFc / TROOP_TIER_POINTS,
+// so they're kept independent rather than reusing those.
+// ---------------------------------------------------------------------------
+
+// Furnace / Fire Crystal level options for the signup form's own dropdown —
+// a fixed list (not Store.furnaceFc, which is the admin-managed bag-planner
+// list and can differ from this one).
+const SVS_SIGNUP_FURNACE_LEVELS = ["28", "29", "30", "FC1", "FC2", "FC3", "FC4", "FC5", "FC6", "FC7", "FC8", "FC9", "FC10"];
+
+// Troop levels for the signup form's three troop-type dropdowns — T6-T12
+// only. Deliberately separate from TROOP_TIER_POINTS (T1-T11) above — that
+// table is bag-planner promotion SCORING (a different concept, a different
+// range), while this is just "what's the highest tier you currently have"
+// for each troop type on the signup form.
+const SVS_SIGNUP_TROOP_LEVELS = ["T6", "T7", "T8", "T9", "T10", "T11", "T12"];
+
+const SVS_PARTICIPATION_OPTIONS = [
+  { value: "STAYING", label: "Staying in my alliance" },
+  { value: "TRAVELING", label: "Traveling to SVS Alliance" },
+];
+
+// Training Camp / Troop Building level — a THIRD, separate progression
+// value from both Furnace/FC Level and Troop Tier (see the CORE RULE
+// comment on the signup form: furnace, troop tier, and troop-building
+// level never collapse into each other, even though they share "FC"
+// naming with the furnace list). This is the full possible range; how
+// much of it a player can actually pick from is capped by the admin's
+// Store.state.maxTroopBuildingLevel — see svsSignupAvailableBuildingLevels.
+const SVS_SIGNUP_BUILDING_LEVELS_ALL = ["LVL 30", "FC1", "FC2", "FC3", "FC4", "FC5", "FC6", "FC7", "FC8", "FC9", "FC10"];
+
+// The three troop types every signup tracks — used to iterate infantry/
+// lancer/marksman consistently (validation, admin table, form rendering)
+// instead of repeating the same three keys everywhere.
+const SVS_SIGNUP_TROOP_TYPES = [
+  { key: "infantry", label: "Infantry" },
+  { key: "lancer", label: "Lancer" },
+  { key: "marksman", label: "Marksman" },
+];
+
+// State-configured ceiling for the signup form's three Training Camp Level
+// dropdowns — NOT the same setting as maxFurnaceLevel (a state can be
+// furnace FC5 / troop-building FC4, or any other combination). Falls back
+// to the full list if the stored value doesn't match anything in it (e.g.
+// blank on a very old save), so the form never ends up offering zero
+// options.
+function svsSignupAvailableBuildingLevels() {
+  const cap = Store.state?.maxTroopBuildingLevel;
+  const idx = SVS_SIGNUP_BUILDING_LEVELS_ALL.indexOf(cap);
+  if (idx === -1) return SVS_SIGNUP_BUILDING_LEVELS_ALL.slice();
+  return SVS_SIGNUP_BUILDING_LEVELS_ALL.slice(0, idx + 1);
+}
+
+// Looks up a player's current signup, or null if they've never submitted
+// one. playerId is always Store.currentUser's member id — never free text.
+function getSvsSignup(playerId) {
+  if (!playerId) return null;
+  return Store.svsSignups[playerId] || null;
+}
+
+// Creates or updates the ONE signup record for playerId — never appends a
+// second record for the same id. Preserves the original submittedAt across
+// edits, and always stamps updatedAt with the current time.
+function upsertSvsSignup(playerId, patch) {
+  if (!playerId) return null;
+  const all = { ...Store.svsSignups };
+  const now = Date.now();
+  const existing = all[playerId];
+  const record = {
+    ...patch,
+    playerId,
+    submittedAt: existing ? existing.submittedAt : now,
+    updatedAt: now,
+  };
+  all[playerId] = record;
+  Store.svsSignups = all;
+  return record;
+}
+
+// Field-by-field validation, in the order the form presents them, so the
+// FIRST missing thing is always what gets reported back — matches the
+// spec's example messages exactly (e.g. "Please select your Marksman troop
+// level."). Also re-checks each Training Camp Level against the CURRENT
+// admin-configured maximum server-side (not just by hiding options in the
+// dropdown) — if the state's max was lowered after a player picked a
+// higher one, or a stale/tampered value somehow reaches here, the save is
+// rejected with a clear message rather than silently accepted.
+function validateSvsSignupForm(v) {
+  v = v || {};
+  if (!v.gamerId || !String(v.gamerId).trim()) return "Please enter your Gamer ID.";
+  if (!v.gamerName || !String(v.gamerName).trim()) return "Please enter your Gamer Name.";
+  if (!v.allianceTag) return "Please select your Alliance Tag.";
+  if (!v.furnaceLevel) return "Please select your Furnace / FC Level.";
+  if (!v.svsParticipation) return "Please choose whether you're staying or traveling for SVS.";
+
+  const availableBuilding = svsSignupAvailableBuildingLevels();
+  for (const t of SVS_SIGNUP_TROOP_TYPES) {
+    const entry = v.troops?.[t.key] || {};
+    if (!entry.troopLevel) return `Please select your ${t.label} troop level.`;
+    if (!entry.buildingLevel) return `Please select your ${t.label} Training Camp level.`;
+    if (!availableBuilding.includes(entry.buildingLevel)) {
+      return `Your ${t.label} Training Camp level is above the state's current maximum (${availableBuilding[availableBuilding.length - 1]}) — please choose a valid level.`;
+    }
+  }
+  return null;
 }

@@ -19,6 +19,7 @@ const ROUTES = {
   "/feedback": renderFeedback,
   "/admin": renderAdmin,
   "/championship": renderChampionship,
+  "/svs-signup": renderSvsSignupPage,
 };
 // wire up stub routes for planned tools
 PLANNED_TOOLS.forEach((t) => {
@@ -59,17 +60,25 @@ function renderShell() {
   const user = Store.currentUser;
   document.getElementById("shell").innerHTML = `
     <div class="topbar">
-      <a href="#/" class="brand">
-        <span class="name">STATE-${st.stateNumber}</span>
-        <span class="ver">${st.version}</span>
-      </a>
-      ${isAdmin(user) ? `<a href="#/admin" class="signin" style="color:var(--accent-gold);">⚙ admin</a>` : `<span></span>`}
+      <div class="topbar-group">
+        <a href="#/" class="brand">
+          <span class="brand-mark"></span>
+          <span class="brand-text">
+            <span><span class="name">STATE-${st.stateNumber}</span> <span class="ver">${st.version}</span></span>
+            <span class="brand-sub">TACTICAL OPERATIONS HUB</span>
+          </span>
+        </a>
+        ${isAdmin(user) ? `<a href="#/admin" class="admin-chip">⚙ ADMIN<span class="sub">SYSTEM ACCESS: OPERATOR</span></a>` : ""}
+      </div>
       <div class="clock" id="clock">--:-- <span class="tz">UTC</span></div>
-      ${
-        user
-          ? `<div class="who">◇ ${user.name}<button id="signOutBtn">sign out</button></div>`
-          : `<button class="signin" id="signInBtn">◇ sign in</button>`
-      }
+      <div class="topbar-group">
+        ${
+          user
+            ? `<div class="who"><span class="user-chip">◇ ${escapeHtml(user.name)}</span><button id="signOutBtn">SIGN OUT</button></div>`
+            : `<button class="signin" id="signInBtn">◇ SIGN IN</button>`
+        }
+      </div>
+      <div class="strap">UNITED STRATEGY<br/>STRONGER TOMORROW</div>
     </div>
     <main id="app"></main>
     <nav class="bottom-nav">
@@ -85,6 +94,11 @@ function renderShell() {
     // currentUser is cleared.
     flushDraftAutosave();
     Store.currentUser = null;
+    // Don't leak one player's in-progress (unsaved) SVS Alliance Signup
+    // edits/notices to whoever signs in next on this browser.
+    svsSignupDraft = null;
+    svsSignupError = "";
+    svsSignupSavedNotice = false;
     renderShell();
     router();
   });
@@ -106,7 +120,10 @@ function tickClock() {
   const now = new Date();
   const hh = String(now.getUTCHours()).padStart(2, "0");
   const mm = String(now.getUTCMinutes()).padStart(2, "0");
-  el.innerHTML = `${hh}:${mm} <span class="tz">UTC</span>`;
+  const dateStr = now
+    .toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })
+    .toUpperCase();
+  el.innerHTML = `${hh}:${mm} <span class="tz">UTC</span><span class="date">${dateStr}</span>`;
 }
 setInterval(tickClock, 15000);
 
@@ -118,6 +135,7 @@ function router() {
     .querySelectorAll(".bottom-nav a")
     .forEach((a) => a.classList.toggle("active", a.dataset.path === path));
   const renderer = ROUTES[path] || renderHome;
+  container.classList.toggle("home-main", renderer === renderHome);
   container.innerHTML = "";
   renderer(container);
 }
@@ -278,52 +296,86 @@ function renderHome(el) {
   const publishedSection = renderPublishedScheduleByAlliance();
 
   el.innerHTML = `
-    <div class="section-label">▸ STATE ${st.stateNumber} OPERATIONS</div>
-    <div class="section-label">▸ OPERATIONS</div>
-    <div class="grid2">
+    <div class="ops-hero">
+      <div class="ops-hero-scene" style="--art:${cardArtUri("hero")};">
+        <div class="snowfall"></div>
+        <div class="vignette"></div>
+      </div>
+      <div class="ops-hero-content">
+        <span class="ops-hero-bar"></span>
+        <div>
+          <div class="ops-hero-eyebrow">ALLIANCE DASHBOARD</div>
+          <h1 class="ops-hero-title">OPERATIONS</h1>
+          <p class="ops-hero-desc">Tools, planners and resources for a stronger alliance.</p>
+        </div>
+        <div class="ops-hero-strap">"SAME PEOPLE.<br/>A BIGGER TOMORROW."</div>
+      </div>
+    </div>
+
+    <div class="ops-grid">
       ${opCard({
         href: "#/svs", color: "var(--accent-purple)", title: "svs_prep",
         desc: "Backpack, optimiser, schedule.",
         meta: `SVS ${st.svsDate} · MAX FURNACE FC${st.maxFurnaceLevel || "—"}`,
+        num: "01", iconName: "backpack", tag: "UTILITY", scene: "svs_prep", bright: true,
       })}
       ${opCard({
-        href: "#/rookie-off", color: "var(--accent-pink)", title: "rookie_off",
+        href: "#/rookie-off", color: "var(--console-magenta)", title: "rookie_off",
         desc: "T1 troop promotion leaderboard — pulled from MY BAG.",
         meta: "TROOP DAY CONTEST",
+        num: "02", iconName: "trophy", tag: "COMMUNITY", scene: "rookie_off",
       })}
       ${opCard({
-        href: "#/feedback", color: "var(--accent-orange)", title: "feedback",
+        href: "#/feedback", color: "var(--console-raspberry)", title: "feedback",
         desc: "Post, vote, and track ideas & bugs.",
         meta: "TELL US WHAT'S MISSING", plus: true,
+        num: "03", iconName: "chat", tag: "FEEDBACK", scene: "feedback", bright: true,
       })}
       ${opCard({
-        href: "#/championship", color: "var(--accent-green)", title: "championship",
+        href: "#/championship", color: "var(--console-icecyan)", title: "championship",
         desc: "Alliance Championship lane planner — import players, auto-balance lanes.",
         meta: `${championshipTotalPlayersImported()} PLAYERS IMPORTED (ALL ALLIANCES)`,
+        num: "04", iconName: "people", tag: "PLANNING", scene: "championship", bright: true,
       })}
-      ${PLANNED_TOOLS.map((t) =>
+      ${opCard({
+        href: "#/svs-signup", color: "var(--console-icy-blue)", title: "SVS Battle Sign Up",
+        desc: "Register for SVS battle participation, troop levels, and travel status.",
+        meta: "SVS BATTLE REGISTRATION",
+        num: "05", iconName: "shield", tag: "REGISTRATION", scene: "hero", bright: true,
+      })}
+      ${PLANNED_TOOLS.map((t, i) =>
         opCard({
           href: "#/" + t.id, color: t.color, title: t.title,
           desc: t.desc, meta: "COMING SOON", dim: true,
+          num: String(i + 6).padStart(2, "0"), iconName: t.icon || "doc", tag: t.tag, scene: t.scene || "bear_calculator",
         })
       ).join("")}
     </div>
 
     ${publishedSection}
 
-    <div class="section-label">▸ DATABASE</div>
+    <div class="db-heading">
+      <span class="stat-icon">${icon("inbox")}</span>
+      <div>
+        <div class="title">ALLIANCE DATABASE</div>
+        <div class="sub">Live alliance stats and activity.</div>
+      </div>
+    </div>
     <div class="stat-row">
-      <div class="stat-card">
+      <div class="stat-card" style="--accent:var(--console-icy-blue);">
+        <span class="stat-icon">${icon("users")}</span>
         <div class="label">MEMBERS</div>
         <div class="value">${Store.members.length}</div>
         <div class="sub">REGISTERED</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card" style="--accent:var(--console-magenta);">
+        <span class="stat-icon">${icon("doc")}</span>
         <div class="label">SUBMISSIONS</div>
         <div class="value">${Store.feedback.length}</div>
         <div class="sub">FEEDBACK ITEMS</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card" style="--accent:var(--console-icecyan);">
+        <span class="stat-icon">${icon("users")}</span>
         <div class="label">SLOTS FILLED</div>
         <div class="value">${countFilledSlots()}</div>
         <div class="sub">SVS PREP</div>
@@ -338,7 +390,28 @@ function renderHome(el) {
 function renderPublishedScheduleByAlliance() {
   const published = Store.schedulePublished;
   const publishedDays = SEED_SCHEDULE_DAYS.filter((d) => published[d]);
-  if (!publishedDays.length) return "";
+  const live = !!supabaseClient;
+  const panelHead = `
+    <div class="schedule-head">
+      <span class="cal-icon">${icon("calendar")}</span>
+      <span class="title">SVS SCHEDULE <span class="dash">—</span> <span class="status">${publishedDays.length ? "PUBLISHED" : "AWAITING PUBLISH"}</span></span>
+      ${live ? `<span class="live"><span class="dot"></span>LIVE DATA</span>` : ""}
+    </div>`;
+
+  if (!publishedDays.length) {
+    return `
+      <div class="schedule-panel" style="--sched-art:${cardArtUri("hero")};">
+        <div class="scene"></div>
+        ${panelHead}
+        <div class="schedule-body">
+          <div class="schedule-empty">
+            ${icon("calendar")}
+            <div class="l1">No upcoming <b>SVS</b> events</div>
+            <div class="l2">Schedule will appear here once published.</div>
+          </div>
+        </div>
+      </div>`;
+  }
 
   const sched = Store.schedule;
   const alliances = Store.alliances;
@@ -376,9 +449,14 @@ function renderPublishedScheduleByAlliance() {
     .join("");
 
   return `
-    <div class="section-label">▸ SVS SCHEDULE — PUBLISHED</div>
-    <div class="grid2">
-      ${allianceBlocks || `<div class="panel" style="color:var(--text-dim);font-size:12px;">Published, but no slots are assigned yet.</div>`}
+    <div class="schedule-panel" style="--sched-art:${cardArtUri("hero")};">
+      <div class="scene"></div>
+      ${panelHead}
+      <div class="schedule-body">
+        <div class="grid2">
+          ${allianceBlocks || `<div class="panel" style="color:var(--text-dim);font-size:12px;">Published, but no slots are assigned yet.</div>`}
+        </div>
+      </div>
     </div>
   `;
 }
@@ -639,12 +717,51 @@ function optimizeScheduleForDay(day) {
   unpublishDayOnEdit(day);
 }
 
-function opCard({ href, color, title, desc, meta, plus, dim }) {
+// Home screen op-card cover art: real photographic scenes (one per module —
+// fortress/backpack, troops/flag, radio outpost, banner arena, bear/
+// wilderness), supplied as base64 JPEG data URIs in card-art.js (PHOTO_ART).
+// cardArtUri() looks the image up by the same `scene` key already passed
+// into opCard() from renderHome(), so no call sites needed to change.
+function cardArtUri(sceneKey) {
+  return `url('${(typeof PHOTO_ART !== "undefined" && PHOTO_ART[sceneKey]) || ""}')`;
+}
+const CARD_ICONS = {
+  backpack: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7V5a4 4 0 0 1 8 0v2"/><rect x="5" y="7" width="14" height="14" rx="2.5"/><path d="M9 7v3a3 3 0 0 0 6 0V7"/><path d="M9 14h6"/></svg>`,
+  trophy: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4h10v5a5 5 0 0 1-10 0V4Z"/><path d="M7 5H4a3 3 0 0 0 3 5"/><path d="M17 5h3a3 3 0 0 1-3 5"/><path d="M12 14v3"/><path d="M9 20h6"/><path d="M9.5 17h5l.5 3H9l.5-3Z"/></svg>`,
+  chat: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v10.5a1.5 1.5 0 0 1-1.5 1.5H9l-4 4v-4H4Z"/><path d="M8 9.5h8M8 12.5h5"/></svg>`,
+  people: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3 19a6 6 0 0 1 12 0"/><circle cx="17.5" cy="9.5" r="2.4"/><path d="M15 19a5 5 0 0 1 6.2-4.85"/></svg>`,
+  paw: `<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><ellipse cx="12" cy="16.5" rx="6" ry="4.5"/><circle cx="5.5" cy="9.5" r="2.1"/><circle cx="10.2" cy="6" r="2.1"/><circle cx="13.8" cy="6" r="2.1"/><circle cx="18.5" cy="9.5" r="2.1"/></svg>`,
+  arrow: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>`,
+  plus: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>`,
+  doc: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/></svg>`,
+  users: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M2.5 19a6.5 6.5 0 0 1 13 0"/><circle cx="17.5" cy="9" r="2.4"/><path d="M15.2 13.5A5 5 0 0 1 21.5 19"/></svg>`,
+  inbox: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h4l2 3h4l2-3h4"/><path d="M5.5 5h13L21 12v6a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18v-6L5.5 5Z"/></svg>`,
+  calendar: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="16" rx="2"/><path d="M8 3v4M16 3v4M3.5 10h17"/></svg>`,
+  // Troop-category icons for the SVS Battle Sign Up form's Infantry/Lancer/
+  // Marksman cards (see SVS_SIGNUP_TROOP_SECTION_STYLE below).
+  shield: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3Z"/></svg>`,
+  spear: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 19.5L15 9"/><path d="M13 5l6 6-3 3-6-6 3-3Z"/></svg>`,
+  target: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4.2"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/></svg>`,
+};
+function icon(name) { return CARD_ICONS[name] || ""; }
+
+function opCard({ href, color, title, desc, meta, plus, dim, num, iconName, tag, scene, bright }) {
+  const art = cardArtUri(scene || "svs_prep");
   return `
-    <a href="${href}" class="card op-card clickable" style="--accent:${color};${dim ? "opacity:.6;" : ""}">
-      <h3>${title} <span style="color:${color}">${plus ? "+" : "▶"}</span></h3>
-      <p>${desc}</p>
-      <div class="meta">${meta}</div>
+    <a href="${href}" class="card op-card clickable${dim ? " dim" : ""}${bright ? " bright-art" : ""}" style="--accent:${color};--art:${art};">
+      <div class="op-card-top">
+        <span class="op-card-num">${num || ""}</span>
+        <span class="op-card-arrow">${icon(plus ? "plus" : "arrow")}</span>
+      </div>
+      <div class="op-card-body">
+        <span class="op-card-icon">${icon(iconName || "doc")}</span>
+        <h3>${title}</h3>
+        <p>${desc}</p>
+      </div>
+      <div class="meta-row">
+        <span class="meta">${icon("doc")}<span>${meta}</span></span>
+        ${tag ? `<span class="tag-pill">${tag}</span>` : ""}
+      </div>
     </a>
   `;
 }
@@ -675,6 +792,22 @@ let exportModalState = null;
 // Edit, this holds that member's id and the wizard below edits their
 // submission instead of the signed-in admin's own.
 let svsEditingMemberId = null;
+
+// --- SVS Alliance Signup (additive feature — see renderSvsSignupForm) -----
+// In-progress, not-yet-saved edits to the signed-in player's signup form.
+// Null until the tab is first opened, at which point it's populated from
+// their existing signup (Store.svsSignups) or, for a first-time signup,
+// pre-filled from their account/bag data.
+let svsSignupDraft = null;
+// Set after a failed submit attempt — the first missing-field message from
+// validateSvsSignupForm, cleared on the next successful save.
+let svsSignupError = "";
+// Shows the "Signup saved" confirmation banner right after a successful
+// submit/update — cleared on the next edit.
+let svsSignupSavedNotice = false;
+// Admin → SVS Alliance Signups table filters — { alliance, participation,
+// furnace, troop } — all "" (no filter) by default.
+let svsSignupAdminFilters = { alliance: "", participation: "", furnace: "", troop: "" };
 
 function svsWizardTargetUser() {
   if (svsEditingMemberId) {
@@ -733,6 +866,11 @@ function renderSvS(el) {
 
   const scheduleAllowed = canSeeSchedule(Store.currentUser);
   if (svsTab === "schedule" && !scheduleAllowed) svsTab = "request";
+  // SVS Battle Sign Up moved out to its own home-page card + standalone
+  // route (see renderSvsSignupPage / "/svs-signup") — it's no longer a tab
+  // buried inside SvS Prep. Any stale svsTab left over from before that
+  // move falls back to MY BAG rather than 404ing on a removed tab.
+  if (svsTab === "signup") svsTab = "request";
   el.innerHTML = `
     <div class="tabs" style="--accent-active:var(--accent-purple)">
       <button data-t="request" class="${svsTab === "request" ? "active" : ""}">MY BAG</button>
@@ -1389,6 +1527,238 @@ function renderSvSMyPoints(el) {
   `;
 }
 
+// ---------------------------------------------------------------------------
+// SVS Alliance Signup — additive tab under SvS Prep (see renderSvS above).
+// Entirely separate from the bag/optimizer/schedule flow: its own draft
+// var (svsSignupDraft), its own Store key (Store.svsSignups), and its own
+// admin panel (see renderAdmin's "SVS Alliance Signups" section below).
+// ---------------------------------------------------------------------------
+
+// Builds the starting form values when the tab is first opened this
+// session: the player's existing signup if they have one (so they land in
+// "edit" mode, never creating a second record), otherwise best-effort
+// pre-fill from their account (name/alliance) and their bag submission's
+// furnace level (furnace level isn't stored on the member record itself).
+// Section headings on the signup form use the plural game terms (matching
+// the spec's "INFANTRY / LANCERS / MARKSMEN" layout); validation messages
+// and the admin table use SVS_SIGNUP_TROOP_TYPES's singular labels instead
+// ("Infantry troop level", "Lancer Building") — same three keys, just two
+// different label sets for two different contexts.
+const SVS_SIGNUP_TROOP_SECTION_LABELS = { infantry: "Infantry", lancer: "Lancers", marksman: "Marksmen" };
+
+// Per-category visual treatment for the signup form's troop cards — a
+// distinct accent + icon per type (still drawn entirely from the existing
+// neon token palette) so INFANTRY / LANCERS / MARKSMEN read as three
+// clearly separate subsections at a glance, not just three rows in a form.
+const SVS_SIGNUP_TROOP_SECTION_STYLE = {
+  infantry: { color: "var(--accent-purple)", iconName: "shield" },
+  lancer: { color: "var(--accent-pink)", iconName: "spear" },
+  marksman: { color: "var(--accent-amber)", iconName: "target" },
+};
+
+function blankSvsSignupTroops() {
+  return {
+    infantry: { troopLevel: "", buildingLevel: "" },
+    lancer: { troopLevel: "", buildingLevel: "" },
+    marksman: { troopLevel: "", buildingLevel: "" },
+  };
+}
+
+function svsSignupBlankFromAccount(user) {
+  const existing = getSvsSignup(user.id);
+  if (existing) {
+    const troops = blankSvsSignupTroops();
+    SVS_SIGNUP_TROOP_TYPES.forEach((t) => {
+      troops[t.key] = {
+        troopLevel: existing.troops?.[t.key]?.troopLevel || "",
+        buildingLevel: existing.troops?.[t.key]?.buildingLevel || "",
+      };
+    });
+    return {
+      gamerId: existing.gamerId || user.gamerId || "",
+      gamerName: existing.gamerName || user.name || "",
+      allianceTag: existing.allianceTag || user.alliance || "",
+      furnaceLevel: existing.furnaceLevel || "",
+      svsParticipation: existing.svsParticipation || "",
+      troops,
+    };
+  }
+  // The bag planner's furnace value (Store.furnaceFc, admin-managed) can
+  // hold options this form doesn't offer (e.g. an admin-added "FC11") —
+  // only pre-fill it here if it's actually one of THIS form's fixed
+  // Furnace/FC Level options, otherwise leave it blank for the player to
+  // pick themselves.
+  const bagSub = Store.bagSubmissions[user.id];
+  const bagFurnace = bagSub?.values?.d1_furnace || "";
+  return {
+    gamerId: user.gamerId || "",
+    gamerName: user.name || "",
+    allianceTag: user.alliance || "",
+    furnaceLevel: SVS_SIGNUP_FURNACE_LEVELS.includes(bagFurnace) ? bagFurnace : "",
+    svsParticipation: "",
+    troops: blankSvsSignupTroops(),
+  };
+}
+
+// Standalone page for the "/svs-signup" route — the home page's new "SVS
+// Battle Sign Up" operation card links here directly. Same page-header
+// pattern as the other standalone tools (renderRookieOff, renderFeedback,
+// renderChampionship): an eyebrow + title, then the actual feature body.
+// The form itself (renderSvsSignupForm) is unchanged underneath — this is
+// purely a new navigation entry point, not a second copy of the feature.
+function renderSvsSignupPage(el) {
+  el.innerHTML = `
+    <div class="eyebrow">// REGISTRATION</div>
+    <h1 class="page-title" style="color:var(--console-icy-blue)">SVS Battle Sign Up</h1>
+    <p style="font-size:12.5px;color:var(--text-dim);margin:-6px 0 16px;">
+      Register your alliance tag, furnace level, troop levels, and SVS travel status ahead of the next event.
+    </p>
+    <div id="svsSignupPageBody"></div>
+  `;
+  renderSvsSignupForm(el.querySelector("#svsSignupPageBody"));
+}
+
+function renderSvsSignupForm(el) {
+  const user = Store.currentUser;
+  if (!user) return svsGate(el, "Sign in to complete your SVS Battle Sign Up");
+  if (!svsSignupDraft) svsSignupDraft = svsSignupBlankFromAccount(user);
+  const existing = getSvsSignup(user.id);
+  const open = Store.svsSignupsOpen;
+  const alliances = Store.alliances;
+  const furnaceOptions = SVS_SIGNUP_FURNACE_LEVELS;
+  const v = svsSignupDraft;
+  const disabled = !open;
+  const buildingOptions = svsSignupAvailableBuildingLevels();
+
+  el.innerHTML = `
+    <div class="panel">
+      ${
+        !open
+          ? `<div class="empty" style="margin-bottom:14px;">Signups are currently closed.${existing ? " Your last submitted signup is shown below (read-only)." : " Check back once an admin opens signups."}</div>`
+          : ""
+      }
+      ${
+        svsSignupSavedNotice
+          ? `<div style="background:rgba(46,213,115,.08);border:1px solid var(--accent-green);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12.5px;color:var(--accent-green);">✓ Your SVS Battle Sign Up has been saved.</div>`
+          : ""
+      }
+      ${
+        svsSignupError
+          ? `<div style="background:rgba(255,71,87,.08);border:1px solid var(--accent-red);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12.5px;color:var(--accent-red);">${escapeHtml(svsSignupError)}</div>`
+          : ""
+      }
+
+      <div class="field-grid">
+        <div class="field">
+          <label>Gamer ID</label>
+          <input id="signupGamerId" value="${escapeHtml(v.gamerId)}" placeholder="e.g. 674116978" ${disabled ? "disabled" : ""} />
+        </div>
+        <div class="field">
+          <label>Gamer Name</label>
+          <input id="signupGamerName" value="${escapeHtml(v.gamerName)}" placeholder="e.g. FROGMAN" ${disabled ? "disabled" : ""} />
+        </div>
+        <div class="field">
+          <label>Alliance Tag</label>
+          <select id="signupAlliance" ${disabled ? "disabled" : ""}>
+            <option value="" ${!v.allianceTag ? "selected" : ""}>Select alliance…</option>
+            ${alliances.map((a) => `<option value="${escapeHtml(a)}" ${v.allianceTag === a ? "selected" : ""}>${escapeHtml(a)}</option>`).join("")}
+          </select>
+        </div>
+        <div class="field">
+          <label>Furnace / FC Level</label>
+          <select id="signupFurnace" ${disabled ? "disabled" : ""}>
+            <option value="" ${!v.furnaceLevel ? "selected" : ""}>Select furnace / FC level…</option>
+            ${furnaceOptions.map((f) => `<option value="${escapeHtml(f)}" ${v.furnaceLevel === f ? "selected" : ""}>${escapeHtml(f)}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+
+      <div class="section-title">SVS PARTICIPATION</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:8px;">
+        ${SVS_PARTICIPATION_OPTIONS.map(
+          (opt) => `
+          <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;cursor:${disabled ? "default" : "pointer"};">
+            <input type="radio" name="signupParticipation" value="${opt.value}" ${v.svsParticipation === opt.value ? "checked" : ""} ${disabled ? "disabled" : ""} />
+            ${escapeHtml(opt.label)}
+          </label>`
+        ).join("")}
+      </div>
+
+      <div class="section-title">TROOP LEVELS</div>
+      ${SVS_SIGNUP_TROOP_TYPES.map((t) => {
+        const style = SVS_SIGNUP_TROOP_SECTION_STYLE[t.key];
+        return `
+        <div style="border:1px solid ${style.color};border-left:3px solid ${style.color};background:var(--panel-2);border-radius:var(--radius);padding:16px 18px;margin-bottom:20px;box-shadow:0 0 16px -8px ${style.color};">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+            <span style="width:32px;height:32px;flex:none;border-radius:7px;border:1.5px solid ${style.color};color:${style.color};display:flex;align-items:center;justify-content:center;background:color-mix(in srgb, ${style.color} 16%, transparent);">${icon(style.iconName)}</span>
+            <div style="font-size:16px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:#fff;">${SVS_SIGNUP_TROOP_SECTION_LABELS[t.key]}</div>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:16px 20px;">
+            <div class="field" style="flex:1;min-width:160px;">
+              <label>Troop Level</label>
+              <select data-troop="${t.key}" data-part="troopLevel" ${disabled ? "disabled" : ""}>
+                <option value="" ${!v.troops[t.key].troopLevel ? "selected" : ""}>Select level…</option>
+                ${SVS_SIGNUP_TROOP_LEVELS.map((lvl) => `<option value="${lvl}" ${v.troops[t.key].troopLevel === lvl ? "selected" : ""}>${lvl}</option>`).join("")}
+              </select>
+            </div>
+            <div class="field" style="flex:1;min-width:160px;">
+              <label>Training Camp Level</label>
+              <select data-troop="${t.key}" data-part="buildingLevel" ${disabled ? "disabled" : ""}>
+                <option value="" ${!v.troops[t.key].buildingLevel ? "selected" : ""}>Select level…</option>
+                ${buildingOptions.map((lvl) => `<option value="${escapeHtml(lvl)}" ${v.troops[t.key].buildingLevel === lvl ? "selected" : ""}>${escapeHtml(lvl)}</option>`).join("")}
+              </select>
+            </div>
+          </div>
+        </div>`;
+      }).join("")}
+
+      ${!disabled ? `<button class="btn primary" id="signupSubmit" style="margin-top:18px;">${existing ? "UPDATE SVS SIGNUP" : "SUBMIT SVS SIGNUP"}</button>` : ""}
+      ${existing ? `<p style="font-size:11px;color:var(--text-faint);margin-top:10px;">Last saved ${new Date(existing.updatedAt).toLocaleString()}.</p>` : ""}
+    </div>
+  `;
+
+  if (disabled) return;
+
+  const commit = (patch) => { svsSignupDraft = { ...svsSignupDraft, ...patch }; svsSignupSavedNotice = false; };
+  el.querySelector("#signupGamerId").addEventListener("input", (e) => commit({ gamerId: e.target.value }));
+  el.querySelector("#signupGamerName").addEventListener("input", (e) => commit({ gamerName: e.target.value }));
+  el.querySelector("#signupAlliance").addEventListener("change", (e) => commit({ allianceTag: e.target.value }));
+  el.querySelector("#signupFurnace").addEventListener("change", (e) => commit({ furnaceLevel: e.target.value }));
+  el.querySelectorAll('input[name="signupParticipation"]').forEach((r) =>
+    r.addEventListener("change", () => { if (r.checked) commit({ svsParticipation: r.value }); })
+  );
+  el.querySelectorAll("[data-troop]").forEach((sel) =>
+    sel.addEventListener("change", () => {
+      svsSignupDraft = {
+        ...svsSignupDraft,
+        troops: {
+          ...svsSignupDraft.troops,
+          [sel.dataset.troop]: { ...svsSignupDraft.troops[sel.dataset.troop], [sel.dataset.part]: sel.value },
+        },
+      };
+      svsSignupSavedNotice = false;
+    })
+  );
+
+  el.querySelector("#signupSubmit").addEventListener("click", () => {
+    const err = validateSvsSignupForm(svsSignupDraft);
+    if (err) {
+      svsSignupError = err;
+      svsSignupSavedNotice = false;
+      // Re-render this form in place — NOT refreshSvS(), which re-renders
+      // the separate SvS Prep tab page. This form now lives on its own
+      // standalone "/svs-signup" route (see renderSvsSignupPage), so it
+      // re-renders itself directly regardless of which page embeds it.
+      renderSvsSignupForm(el);
+      return;
+    }
+    svsSignupError = "";
+    upsertSvsSignup(user.id, { ...svsSignupDraft });
+    svsSignupSavedNotice = true;
+    renderSvsSignupForm(el);
+  });
+}
+
 function renderSvSSchedule(el) {
   const admin = canSeeSchedule(Store.currentUser);
   const sched = Store.schedule;
@@ -2019,6 +2389,114 @@ function renderRookieOff(el) {
 // ---------------------------------------------------------------------------
 // ADMIN
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Admin → SVS Alliance Signups — a read/filter view of every player's
+// Store.svsSignups record, plus the open/closed toggle that gates the
+// signup form (renderSvsSignupForm) for regular members. An officer (R4)
+// sees only their own alliance's signups, same scoping already used for
+// the Members/Bag submissions tables above — never a different alliance's
+// player data.
+// ---------------------------------------------------------------------------
+function svsSignupAdminRows(user, officerScoped) {
+  let rows = Object.values(Store.svsSignups || {});
+  if (officerScoped) rows = rows.filter((r) => r.allianceTag === user.alliance);
+  const f = svsSignupAdminFilters;
+  if (f.alliance) rows = rows.filter((r) => r.allianceTag === f.alliance);
+  if (f.participation) rows = rows.filter((r) => r.svsParticipation === f.participation);
+  if (f.furnace) rows = rows.filter((r) => r.furnaceLevel === f.furnace);
+  if (f.troop) rows = rows.filter((r) => SVS_SIGNUP_TROOP_TYPES.some((t) => r.troops?.[t.key]?.troopLevel === f.troop));
+  rows.sort((a, b) => (a.gamerName || "").localeCompare(b.gamerName || ""));
+  return rows;
+}
+
+function renderSvsSignupAdminPanelHtml(user, officerScoped) {
+  const allRows = officerScoped
+    ? Object.values(Store.svsSignups || {}).filter((r) => r.allianceTag === user.alliance)
+    : Object.values(Store.svsSignups || {});
+  const rows = svsSignupAdminRows(user, officerScoped);
+  const alliances = officerScoped ? (user.alliance ? [user.alliance] : []) : Store.alliances;
+  const furnaceOptions = SVS_SIGNUP_FURNACE_LEVELS;
+  const open = Store.svsSignupsOpen;
+  const f = svsSignupAdminFilters;
+
+  return `
+    <div class="panel">
+      <div class="planner-header" style="flex-wrap:wrap;gap:8px;">
+        <strong>SVS Alliance Signups (${rows.length} / ${allRows.length})</strong>
+        <button class="btn small ${open ? "primary" : ""}" id="admSignupsToggle">${open ? "🔓 Signups Open — Close" : "🔒 Signups Closed — Open"}</button>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+        <select id="admSignupFAlliance" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:6px 8px;font-size:11.5px;">
+          <option value="">All alliances</option>
+          ${alliances.map((a) => `<option value="${escapeHtml(a)}" ${f.alliance === a ? "selected" : ""}>${escapeHtml(a)}</option>`).join("")}
+        </select>
+        <select id="admSignupFParticipation" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:6px 8px;font-size:11.5px;">
+          <option value="">Staying + Traveling</option>
+          ${SVS_PARTICIPATION_OPTIONS.map((o) => `<option value="${o.value}" ${f.participation === o.value ? "selected" : ""}>${escapeHtml(o.label)}</option>`).join("")}
+        </select>
+        <select id="admSignupFFurnace" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:6px 8px;font-size:11.5px;">
+          <option value="">All furnace / FC levels</option>
+          ${furnaceOptions.map((fc) => `<option value="${escapeHtml(fc)}" ${f.furnace === fc ? "selected" : ""}>${escapeHtml(fc)}</option>`).join("")}
+        </select>
+        <select id="admSignupFTroop" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:6px 8px;font-size:11.5px;">
+          <option value="">All troop levels</option>
+          ${SVS_SIGNUP_TROOP_LEVELS.map((lvl) => `<option value="${lvl}" ${f.troop === lvl ? "selected" : ""}>${lvl}</option>`).join("")}
+        </select>
+      </div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr><th>GAMER NAME</th><th>GAMER ID</th><th>ALLIANCE</th><th>FURNACE / FC</th><th>INFANTRY TROOP</th><th>INFANTRY BUILDING</th><th>LANCER TROOP</th><th>LANCER BUILDING</th><th>MARKSMAN TROOP</th><th>MARKSMAN BUILDING</th><th>SVS CHOICE</th></tr></thead>
+          <tbody>
+            ${
+              rows
+                .map((r) => {
+                  const choiceLabel = SVS_PARTICIPATION_OPTIONS.find((o) => o.value === r.svsParticipation)?.label || r.svsParticipation || "—";
+                  return `<tr>
+                    <td>${escapeHtml(r.gamerName || "—")}</td>
+                    <td>${escapeHtml(r.gamerId || "—")}</td>
+                    <td>${escapeHtml(r.allianceTag || "—")}</td>
+                    <td>${escapeHtml(r.furnaceLevel || "—")}</td>
+                    <td>${escapeHtml(r.troops?.infantry?.troopLevel || "—")}</td>
+                    <td>${escapeHtml(r.troops?.infantry?.buildingLevel || "—")}</td>
+                    <td>${escapeHtml(r.troops?.lancer?.troopLevel || "—")}</td>
+                    <td>${escapeHtml(r.troops?.lancer?.buildingLevel || "—")}</td>
+                    <td>${escapeHtml(r.troops?.marksman?.troopLevel || "—")}</td>
+                    <td>${escapeHtml(r.troops?.marksman?.buildingLevel || "—")}</td>
+                    <td>${escapeHtml(choiceLabel)}</td>
+                  </tr>`;
+                })
+                .join("") || `<tr><td colspan="11">No signups match these filters.</td></tr>`
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function wireSvsSignupAdminPanel(el, user, officerScoped) {
+  el.querySelector("#admSignupsToggle")?.addEventListener("click", () => {
+    Store.svsSignupsOpen = !Store.svsSignupsOpen;
+    renderAdmin(el);
+  });
+  el.querySelector("#admSignupFAlliance")?.addEventListener("change", (e) => {
+    svsSignupAdminFilters = { ...svsSignupAdminFilters, alliance: e.target.value };
+    renderAdmin(el);
+  });
+  el.querySelector("#admSignupFParticipation")?.addEventListener("change", (e) => {
+    svsSignupAdminFilters = { ...svsSignupAdminFilters, participation: e.target.value };
+    renderAdmin(el);
+  });
+  el.querySelector("#admSignupFFurnace")?.addEventListener("change", (e) => {
+    svsSignupAdminFilters = { ...svsSignupAdminFilters, furnace: e.target.value };
+    renderAdmin(el);
+  });
+  el.querySelector("#admSignupFTroop")?.addEventListener("change", (e) => {
+    svsSignupAdminFilters = { ...svsSignupAdminFilters, troop: e.target.value };
+    renderAdmin(el);
+  });
+}
+
 function renderAdmin(el) {
   const user = Store.currentUser;
   if (!isAdmin(user)) {
@@ -2072,7 +2550,14 @@ function renderAdmin(el) {
         <div class="field"><label>ENEMY STATE #</label><input id="admEnemy" value="${st.enemyState}" /></div>
         <div class="field"><label>NEXT SVS DATE</label><input id="admDate" type="date" value="${st.svsDate}" /></div>
         <div class="field"><label>MAX FURNACE LEVEL</label><input id="admFurnace" value="${st.maxFurnaceLevel || ""}" /></div>
+        <div class="field">
+          <label>MAX TROOP BUILDING LEVEL</label>
+          <select id="admMaxBuilding">
+            ${SVS_SIGNUP_BUILDING_LEVELS_ALL.map((lvl) => `<option value="${escapeHtml(lvl)}" ${st.maxTroopBuildingLevel === lvl ? "selected" : ""}>${escapeHtml(lvl)}</option>`).join("")}
+          </select>
+        </div>
       </div>
+      <p style="font-size:11px;color:var(--text-faint);margin:-8px 0 12px;">Separate from Max Furnace Level above — caps how high the three Training Camp Level dropdowns on SVS Alliance Signup go (e.g. furnace can be FC5 while troop-building is capped at FC4).</p>
       <button class="btn primary small" id="admSaveState">Save</button>
       <span id="admStateMsg" style="margin-left:10px;font-size:12px;color:var(--accent-green);"></span>
     </div>
@@ -2287,6 +2772,8 @@ function renderAdmin(el) {
     </div>
     `
     }
+
+    ${renderSvsSignupAdminPanelHtml(user, officerScoped)}
   `;
 
   // These panels (state config, alliances, furnace brackets, SvS bulk
@@ -2344,9 +2831,16 @@ function renderAdmin(el) {
       enemyState: el.querySelector("#admEnemy").value.trim(),
       svsDate: el.querySelector("#admDate").value,
       maxFurnaceLevel: el.querySelector("#admFurnace").value.trim(),
+      maxTroopBuildingLevel: el.querySelector("#admMaxBuilding").value,
     };
     el.querySelector("#admStateMsg").textContent = "Saved.";
+    // renderShell() rebuilds the topbar AND swaps in a fresh <main
+    // id="app">, orphaning whatever was rendered into the old one (see the
+    // same note above on the Members table's inline-edit handler) — router()
+    // re-renders this admin panel into the new one so the page doesn't go
+    // blank after Save.
     renderShell();
+    router();
   });
 
   el.querySelector("#admForceSync")?.addEventListener("click", async () => {
@@ -2434,6 +2928,9 @@ function renderAdmin(el) {
         // in case they have an in-progress bag draft pending autosave.
         flushDraftAutosave();
         Store.currentUser = null;
+        svsSignupDraft = null;
+        svsSignupError = "";
+        svsSignupSavedNotice = false;
         renderShell();
         router();
         return;
@@ -2533,6 +3030,8 @@ function renderAdmin(el) {
       renderAdmin(el);
     })
   );
+
+  wireSvsSignupAdminPanel(el, user, officerScoped);
 }
 
 
