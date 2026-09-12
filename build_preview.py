@@ -26,6 +26,8 @@ if m:
 
 with open("data.js") as f:
     data_js = f.read()
+with open("i18n.js") as f:
+    i18n_js = f.read()
 with open("card-art.js") as f:
     card_art_js = f.read()
 with open("app.js") as f:
@@ -39,6 +41,9 @@ out = f"""<title>{TITLE}</title>
 <div id="shell"></div>
 <script>
 {data_js}
+</script>
+<script>
+{i18n_js}
 </script>
 <script>
 {card_art_js}

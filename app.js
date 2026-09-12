@@ -22,8 +22,11 @@ const ROUTES = {
   "/svs-signup": renderSvsSignupPage,
 };
 // wire up stub routes for planned tools
-PLANNED_TOOLS.forEach((t) => {
-  ROUTES["/" + t.id] = (el) => renderComingSoon(el, t);
+// Named `tool`, not `t` — `t` is the global translation lookup (see
+// i18n.js) and a loop-param shadowing it here would silently break any
+// t("...") call made inside this closure.
+PLANNED_TOOLS.forEach((tool) => {
+  ROUTES["/" + tool.id] = (el) => renderComingSoon(el, tool);
 });
 
 function currentPath() {
@@ -56,6 +59,7 @@ function fmtNum(n) {
 // Shell: topbar (with admin link) + bottom nav + router outlet
 // ---------------------------------------------------------------------------
 function renderShell() {
+  applyDocumentDirection();
   const st = Store.state;
   const user = Store.currentUser;
   document.getElementById("shell").innerHTML = `
@@ -65,26 +69,26 @@ function renderShell() {
           <span class="brand-mark"></span>
           <span class="brand-text">
             <span><span class="name">STATE-${st.stateNumber}</span> <span class="ver">${st.version}</span></span>
-            <span class="brand-sub">TACTICAL OPERATIONS HUB</span>
+            <span class="brand-sub">${t("shell.tacticalHub").toUpperCase()}</span>
           </span>
         </a>
-        ${isAdmin(user) ? `<a href="#/admin" class="admin-chip">⚙ ADMIN<span class="sub">SYSTEM ACCESS: OPERATOR</span></a>` : ""}
+        ${isAdmin(user) ? `<a href="#/admin" class="admin-chip">⚙ ${t("shell.admin").toUpperCase()}<span class="sub">${t("shell.systemAccessOperator").toUpperCase()}</span></a>` : ""}
       </div>
-      <div class="clock" id="clock">--:-- <span class="tz">UTC</span></div>
+      <div class="clock" id="clock">--:-- <span class="tz">${t("shell.utc")}</span></div>
       <div class="topbar-group">
         ${
           user
-            ? `<div class="who"><span class="user-chip">◇ ${escapeHtml(user.name)}</span><button id="myAccountBtn">MY ACCOUNT</button><button id="signOutBtn">SIGN OUT</button></div>`
-            : `<button class="signin" id="signInBtn">◇ SIGN IN</button>`
+            ? `<div class="who"><span class="user-chip">◇ ${escapeHtml(user.name)}</span><button id="myAccountBtn">${t("shell.myAccount").toUpperCase()}</button><button id="signOutBtn">${t("shell.signOut").toUpperCase()}</button></div>`
+            : `<button class="signin" id="signInBtn">◇ ${t("shell.signIn").toUpperCase()}</button>`
         }
       </div>
-      <div class="strap">UNITED STRATEGY<br/>STRONGER TOMORROW</div>
+      <div class="strap">${t("shell.strapLine1").toUpperCase()}<br/>${t("shell.strapLine2").toUpperCase()}</div>
     </div>
     <main id="app"></main>
     <nav class="bottom-nav">
-      <a href="#/" data-path="/">◆<br/>home</a>
-      <a href="#/svs" data-path="/svs">▶<br/>svs</a>
-      ${isAdmin(user) ? `<a href="#/admin" data-path="/admin">⚙<br/>admin</a>` : ""}
+      <a href="#/" data-path="/">◆<br/>${t("nav.home")}</a>
+      <a href="#/svs" data-path="/svs">▶<br/>${t("nav.svs")}</a>
+      ${isAdmin(user) ? `<a href="#/admin" data-path="/admin">⚙<br/>${t("nav.admin")}</a>` : ""}
     </nav>
   `;
   document.getElementById("signInBtn")?.addEventListener("click", openSignIn);
@@ -124,7 +128,7 @@ function tickClock() {
   const dateStr = now
     .toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })
     .toUpperCase();
-  el.innerHTML = `${hh}:${mm} <span class="tz">UTC</span><span class="date">${dateStr}</span>`;
+  el.innerHTML = `${hh}:${mm} <span class="tz">${t("shell.utc")}</span><span class="date">${dateStr}</span>`;
 }
 setInterval(tickClock, 15000);
 
@@ -166,10 +170,10 @@ function openSignIn() {
   overlay.innerHTML = `
     <div class="modal">
       <button class="close">&times;</button>
-      <h3>Sign in</h3>
+      <h3>${t("auth.signInTitle")}</h3>
       <div class="tabs" style="margin-bottom:2px;">
-        <button data-authtab="login" class="active">Existing Member</button>
-        <button data-authtab="signup">New Member</button>
+        <button data-authtab="login" class="active">${t("auth.existingMember")}</button>
+        <button data-authtab="signup">${t("auth.newMember")}</button>
       </div>
       <div id="authPane"></div>
     </div>
@@ -191,14 +195,14 @@ function openSignIn() {
 
 function renderLoginPane(pane, overlay) {
   pane.innerHTML = `
-    <p style="color:var(--text-dim);font-size:12px;margin-top:8px;">Sign in with your chief name or Gamer ID, plus your 4-digit PIN.</p>
-    <input id="siName" placeholder="Chief name or Gamer ID..." list="memberList" />
+    <p style="color:var(--text-dim);font-size:12px;margin-top:8px;">${t("auth.loginSubtitle")}</p>
+    <input id="siName" placeholder="${t("auth.nameOrIdPlaceholder")}" list="memberList" />
     <datalist id="memberList">
       ${Store.members.map((m) => `<option value="${m.name}">`).join("")}
     </datalist>
-    <input id="siPin" placeholder="4-digit PIN..." inputmode="numeric" maxlength="4" style="letter-spacing:.3em;" />
+    <input id="siPin" placeholder="${t("auth.pinPlaceholder")}" inputmode="numeric" maxlength="4" style="letter-spacing:.3em;" />
     <div id="siErr" style="color:var(--accent-red);font-size:11.5px;margin-top:-4px;min-height:28px;"></div>
-    <button class="btn primary" id="siGo" style="width:100%;">Sign in</button>
+    <button class="btn primary" id="siGo" style="width:100%;">${t("auth.signInBtn")}</button>
   `;
   const errEl = pane.querySelector("#siErr");
   const pinInput = pane.querySelector("#siPin");
@@ -209,8 +213,8 @@ function renderLoginPane(pane, overlay) {
     const idOrName = pane.querySelector("#siName").value.trim();
     const pin = pinInput.value.trim();
     errEl.textContent = "";
-    if (!idOrName) { errEl.textContent = "Enter your chief name or Gamer ID."; return; }
-    if (!/^\d{4}$/.test(pin)) { errEl.textContent = "PIN must be exactly 4 digits."; return; }
+    if (!idOrName) { errEl.textContent = t("auth.errEnterNameOrId"); return; }
+    if (!/^\d{4}$/.test(pin)) { errEl.textContent = t("auth.errPinFormat"); return; }
 
     const members = Store.members;
     const member = members.find(
@@ -220,22 +224,21 @@ function renderLoginPane(pane, overlay) {
     );
 
     if (!member) {
-      errEl.textContent = 'No account found with that name or Gamer ID. Use "New Member" above to create one.';
+      errEl.textContent = t("auth.errNoAccount");
       return;
     }
     if (!member.pin) {
-      errEl.textContent = "This account doesn't have a PIN set yet — ask an admin to set one from Admin → Members.";
+      errEl.textContent = t("auth.errNoPinSet");
       return;
     }
     if (member.pin !== pin) {
-      errEl.textContent = "Incorrect PIN.";
+      errEl.textContent = t("auth.errWrongPin");
       return;
     }
 
     Store.currentUser = member;
     overlay.remove();
-    renderShell();
-    router();
+    applyLocaleAndRerender();
   };
   pane.querySelector("#siGo").onclick = go;
   pinInput.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
@@ -243,20 +246,20 @@ function renderLoginPane(pane, overlay) {
 
 function renderSignUpPane(pane, overlay) {
   pane.innerHTML = `
-    <p style="color:var(--text-dim);font-size:12px;margin-top:8px;">Create your account — this PIN will be required on every future sign-in.</p>
-    <input id="suName" placeholder="Gamer name..." />
+    <p style="color:var(--text-dim);font-size:12px;margin-top:8px;">${t("auth.signupSubtitle")}</p>
+    <input id="suName" placeholder="${t("auth.gamerNamePlaceholder")}" />
     <select id="suAlliance" ${Store.alliances.length ? "" : "disabled"}>
-      <option value="" disabled ${Store.alliances.length ? "selected" : ""}>${Store.alliances.length ? "Select alliance..." : "No alliances configured yet"}</option>
+      <option value="" disabled ${Store.alliances.length ? "selected" : ""}>${Store.alliances.length ? t("auth.selectAlliance") : t("auth.noAlliancesYet")}</option>
       ${Store.alliances.map((a) => `<option value="${escapeHtml(a)}">${escapeHtml(a)}</option>`).join("")}
     </select>
-    <input id="suGamerId" placeholder="Gamer ID..." />
+    <input id="suGamerId" placeholder="${t("auth.gamerIdPlaceholder")}" />
     <select id="suLanguage">
-      <option value="" disabled selected>Select language...</option>
+      <option value="" disabled selected>${t("auth.selectLanguage")}</option>
       ${SUPPORTED_LANGUAGES.map((l) => `<option value="${l.code}">${escapeHtml(l.label)} — ${escapeHtml(l.englishName)}</option>`).join("")}
     </select>
-    <input id="suPin" placeholder="Create a 4-digit PIN..." inputmode="numeric" maxlength="4" style="letter-spacing:.3em;" />
+    <input id="suPin" placeholder="${t("auth.createPinPlaceholder")}" inputmode="numeric" maxlength="4" style="letter-spacing:.3em;" />
     <div id="suErr" style="color:var(--accent-red);font-size:11.5px;margin-top:-4px;min-height:28px;"></div>
-    <button class="btn primary" id="suGo" style="width:100%;">Create account</button>
+    <button class="btn primary" id="suGo" style="width:100%;">${t("auth.createAccountBtn")}</button>
   `;
   const errEl = pane.querySelector("#suErr");
   const pinInput = pane.querySelector("#suPin");
@@ -270,17 +273,17 @@ function renderSignUpPane(pane, overlay) {
     const preferredLanguage = pane.querySelector("#suLanguage").value;
     const pin = pinInput.value.trim();
     errEl.textContent = "";
-    if (!name) { errEl.textContent = "Enter your gamer name."; return; }
-    if (!alliance) { errEl.textContent = "Select your alliance."; return; }
-    if (!gamerId) { errEl.textContent = "Enter your Gamer ID."; return; }
-    if (!preferredLanguage) { errEl.textContent = "Select your preferred language."; return; }
-    if (!/^\d{4}$/.test(pin)) { errEl.textContent = "PIN must be exactly 4 digits."; return; }
+    if (!name) { errEl.textContent = t("auth.errEnterName"); return; }
+    if (!alliance) { errEl.textContent = t("auth.errSelectAlliance"); return; }
+    if (!gamerId) { errEl.textContent = t("auth.errEnterGamerId"); return; }
+    if (!preferredLanguage) { errEl.textContent = t("auth.errSelectLanguage"); return; }
+    if (!/^\d{4}$/.test(pin)) { errEl.textContent = t("auth.errPinFormat"); return; }
 
     const members = Store.members;
     const nameTaken = members.some((m) => m.name.toLowerCase() === name.toLowerCase());
     const idTaken = members.some((m) => m.gamerId && m.gamerId.toLowerCase() === gamerId.toLowerCase());
     if (nameTaken || idTaken) {
-      errEl.textContent = 'An account with that name or Gamer ID already exists — use "Existing Member" to sign in instead.';
+      errEl.textContent = t("auth.errAccountExists");
       return;
     }
 
@@ -288,8 +291,7 @@ function renderSignUpPane(pane, overlay) {
     Store.members = [...members, member];
     Store.currentUser = member;
     overlay.remove();
-    renderShell();
-    router();
+    applyLocaleAndRerender();
   };
   pane.querySelector("#suGo").onclick = go;
   pinInput.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
@@ -312,19 +314,19 @@ function openMyAccount() {
   overlay.innerHTML = `
     <div class="modal">
       <button class="close">&times;</button>
-      <h3>My Account</h3>
-      <p style="color:var(--text-faint);font-size:11px;letter-spacing:1px;margin:14px 0 2px;">GAMER NAME</p>
+      <h3>${t("account.title")}</h3>
+      <p style="color:var(--text-faint);font-size:11px;letter-spacing:1px;margin:14px 0 2px;">${t("account.gamerName").toUpperCase()}</p>
       <p style="font-size:13px;margin:0;">${escapeHtml(user.name)}</p>
-      <p style="color:var(--text-faint);font-size:11px;letter-spacing:1px;margin:14px 0 2px;">ALLIANCE</p>
-      <p style="font-size:13px;margin:0;">${escapeHtml(user.alliance || "—")}</p>
+      <p style="color:var(--text-faint);font-size:11px;letter-spacing:1px;margin:14px 0 2px;">${t("account.alliance").toUpperCase()}</p>
+      <p style="font-size:13px;margin:0;">${escapeHtml(user.alliance) || t("account.noAlliance")}</p>
       <div class="field" style="margin-top:14px;">
-        <label>PREFERRED LANGUAGE</label>
+        <label>${t("account.preferredLanguage").toUpperCase()}</label>
         <select id="maLanguage" style="width:100%;">
           ${SUPPORTED_LANGUAGES.map((l) => `<option value="${l.code}" ${current === l.code ? "selected" : ""}>${escapeHtml(l.label)} — ${escapeHtml(l.englishName)}</option>`).join("")}
         </select>
       </div>
       <div id="maMsg" style="font-size:11.5px;color:var(--accent-green);min-height:18px;margin-top:6px;"></div>
-      <button class="btn primary" id="maSave" style="width:100%;">Save changes</button>
+      <button class="btn primary" id="maSave" style="width:100%;">${t("account.saveChanges")}</button>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -339,10 +341,15 @@ function openMyAccount() {
     members[idx] = { ...members[idx], preferredLanguage };
     Store.members = members;
     Store.currentUser = members[idx];
-    overlay.querySelector("#maMsg").textContent = "Saved.";
-    // Nothing else on screen depends on preferredLanguage yet, so a full
-    // renderShell()/router() re-render isn't needed here — just keep
-    // Store.currentUser in sync (done above) so the next page/save sees it.
+    // Live-switch the interface language right now — no sign-out/sign-in
+    // round trip required (localization spec requirement #1/#7). This
+    // re-renders the shell (topbar, nav) and the current page underneath
+    // the still-open modal; the modal itself stays open in the previous
+    // language for its own remaining lifetime; its "Saved." message below
+    // is written in the NEW language since it runs after the switch.
+    applyLocaleAndRerender();
+    const msgEl = document.getElementById("maMsg") || overlay.querySelector("#maMsg");
+    if (msgEl) msgEl.textContent = t("account.saved");
   });
 }
 
@@ -362,50 +369,50 @@ function renderHome(el) {
       <div class="ops-hero-content">
         <span class="ops-hero-bar"></span>
         <div>
-          <div class="ops-hero-eyebrow">ALLIANCE DASHBOARD</div>
-          <h1 class="ops-hero-title">OPERATIONS</h1>
-          <p class="ops-hero-desc">Tools, planners and resources for a stronger alliance.</p>
+          <div class="ops-hero-eyebrow">${t("home.eyebrow").toUpperCase()}</div>
+          <h1 class="ops-hero-title">${t("home.title").toUpperCase()}</h1>
+          <p class="ops-hero-desc">${t("home.desc")}</p>
         </div>
-        <div class="ops-hero-strap">"SAME PEOPLE.<br/>A BIGGER TOMORROW."</div>
+        <div class="ops-hero-strap">"${t("home.strap").toUpperCase()}"</div>
       </div>
     </div>
 
     <div class="ops-grid">
       ${opCard({
         href: "#/svs", color: "var(--accent-purple)", title: "svs_prep",
-        desc: "Backpack, optimiser, schedule.",
+        desc: t("home.svsPrepDesc"),
         meta: `SVS ${st.svsDate} · MAX FURNACE FC${st.maxFurnaceLevel || "—"}`,
-        num: "01", iconName: "backpack", tag: "UTILITY", scene: "svs_prep", bright: true,
+        num: "01", iconName: "backpack", tag: t("home.tagUtility").toUpperCase(), scene: "svs_prep", bright: true,
       })}
       ${opCard({
         href: "#/rookie-off", color: "var(--console-magenta)", title: "rookie_off",
-        desc: "T1 troop promotion leaderboard — pulled from MY BAG.",
+        desc: t("home.rookieOffDesc"),
         meta: "TROOP DAY CONTEST",
-        num: "02", iconName: "trophy", tag: "COMMUNITY", scene: "rookie_off",
+        num: "02", iconName: "trophy", tag: t("home.tagCommunity").toUpperCase(), scene: "rookie_off",
       })}
       ${opCard({
         href: "#/feedback", color: "var(--console-raspberry)", title: "feedback",
-        desc: "Post, vote, and track ideas & bugs.",
+        desc: t("home.feedbackDesc"),
         meta: "TELL US WHAT'S MISSING", plus: true,
-        num: "03", iconName: "chat", tag: "FEEDBACK", scene: "feedback", bright: true,
+        num: "03", iconName: "chat", tag: t("home.tagFeedback").toUpperCase(), scene: "feedback", bright: true,
       })}
       ${opCard({
         href: "#/championship", color: "var(--console-icecyan)", title: "championship",
-        desc: "Alliance Championship lane planner — import players, auto-balance lanes.",
+        desc: t("home.championshipDesc"),
         meta: `${championshipTotalPlayersImported()} PLAYERS IMPORTED (ALL ALLIANCES)`,
-        num: "04", iconName: "people", tag: "PLANNING", scene: "championship", bright: true,
+        num: "04", iconName: "people", tag: t("home.tagPlanning").toUpperCase(), scene: "championship", bright: true,
       })}
       ${opCard({
-        href: "#/svs-signup", color: "var(--console-icy-blue)", title: "SVS Battle Sign Up",
-        desc: "Register for SVS battle participation, troop levels, and travel status.",
-        meta: "SVS BATTLE REGISTRATION",
-        num: "05", iconName: "shield", tag: "REGISTRATION", scene: "hero", bright: true,
+        href: "#/svs-signup", color: "var(--console-icy-blue)", title: t("home.svsSignupTitle"),
+        desc: t("home.svsSignupDesc"),
+        meta: t("home.svsSignupMeta").toUpperCase(),
+        num: "05", iconName: "shield", tag: t("home.tagRegistration").toUpperCase(), scene: "hero", bright: true,
       })}
-      ${PLANNED_TOOLS.map((t, i) =>
+      ${PLANNED_TOOLS.map((tool, i) =>
         opCard({
-          href: "#/" + t.id, color: t.color, title: t.title,
-          desc: t.desc, meta: "COMING SOON", dim: true,
-          num: String(i + 6).padStart(2, "0"), iconName: t.icon || "doc", tag: t.tag, scene: t.scene || "bear_calculator",
+          href: "#/" + tool.id, color: tool.color, title: tool.title,
+          desc: tool.desc, meta: t("home.comingSoon").toUpperCase(), dim: true,
+          num: String(i + 6).padStart(2, "0"), iconName: tool.icon || "doc", tag: tool.tag, scene: tool.scene || "bear_calculator",
         })
       ).join("")}
     </div>
@@ -415,28 +422,28 @@ function renderHome(el) {
     <div class="db-heading">
       <span class="stat-icon">${icon("inbox")}</span>
       <div>
-        <div class="title">ALLIANCE DATABASE</div>
-        <div class="sub">Live alliance stats and activity.</div>
+        <div class="title">${t("home.databaseTitle").toUpperCase()}</div>
+        <div class="sub">${t("home.databaseSub")}</div>
       </div>
     </div>
     <div class="stat-row">
       <div class="stat-card" style="--accent:var(--console-icy-blue);">
         <span class="stat-icon">${icon("users")}</span>
-        <div class="label">MEMBERS</div>
+        <div class="label">${t("home.members").toUpperCase()}</div>
         <div class="value">${Store.members.length}</div>
-        <div class="sub">REGISTERED</div>
+        <div class="sub">${t("home.registered").toUpperCase()}</div>
       </div>
       <div class="stat-card" style="--accent:var(--console-magenta);">
         <span class="stat-icon">${icon("doc")}</span>
-        <div class="label">SUBMISSIONS</div>
+        <div class="label">${t("home.submissions").toUpperCase()}</div>
         <div class="value">${Store.feedback.length}</div>
-        <div class="sub">FEEDBACK ITEMS</div>
+        <div class="sub">${t("home.feedbackItems").toUpperCase()}</div>
       </div>
       <div class="stat-card" style="--accent:var(--console-icecyan);">
         <span class="stat-icon">${icon("users")}</span>
-        <div class="label">SLOTS FILLED</div>
+        <div class="label">${t("home.slotsFilled").toUpperCase()}</div>
         <div class="value">${countFilledSlots()}</div>
-        <div class="sub">SVS PREP</div>
+        <div class="sub">${t("home.svsPrepLabel").toUpperCase()}</div>
       </div>
     </div>
   `;
@@ -452,8 +459,8 @@ function renderPublishedScheduleByAlliance() {
   const panelHead = `
     <div class="schedule-head">
       <span class="cal-icon">${icon("calendar")}</span>
-      <span class="title">SVS SCHEDULE <span class="dash">—</span> <span class="status">${publishedDays.length ? "PUBLISHED" : "AWAITING PUBLISH"}</span></span>
-      ${live ? `<span class="live"><span class="dot"></span>LIVE DATA</span>` : ""}
+      <span class="title">${t("home.scheduleTitle").toUpperCase()} <span class="dash">—</span> <span class="status">${publishedDays.length ? t("home.published").toUpperCase() : t("home.awaitingPublish").toUpperCase()}</span></span>
+      ${live ? `<span class="live"><span class="dot"></span>${t("home.liveData").toUpperCase()}</span>` : ""}
     </div>`;
 
   if (!publishedDays.length) {
@@ -464,8 +471,8 @@ function renderPublishedScheduleByAlliance() {
         <div class="schedule-body">
           <div class="schedule-empty">
             ${icon("calendar")}
-            <div class="l1">No upcoming <b>SVS</b> events</div>
-            <div class="l2">Schedule will appear here once published.</div>
+            <div class="l1">${t("home.noUpcoming")}</div>
+            <div class="l2">${t("home.scheduleAppear")}</div>
           </div>
         </div>
       </div>`;
@@ -489,7 +496,7 @@ function renderPublishedScheduleByAlliance() {
       if (!rows.length) return "";
       return `
         <div class="panel" style="background:var(--panel-2);">
-          <div class="planner-header"><strong>${escapeHtml(tag)}</strong><span class="eyebrow">${rows.length} SLOT${rows.length === 1 ? "" : "S"}</span></div>
+          <div class="planner-header"><strong>${escapeHtml(tag)}</strong><span class="eyebrow">${rows.length} ${(rows.length === 1 ? t("home.slot") : t("home.slots")).toUpperCase()}</span></div>
           <div style="display:flex;flex-direction:column;gap:4px;">
             ${rows
               .map(
@@ -512,7 +519,7 @@ function renderPublishedScheduleByAlliance() {
       ${panelHead}
       <div class="schedule-body">
         <div class="grid2">
-          ${allianceBlocks || `<div class="panel" style="color:var(--text-dim);font-size:12px;">Published, but no slots are assigned yet.</div>`}
+          ${allianceBlocks || `<div class="panel" style="color:var(--text-dim);font-size:12px;">${t("home.publishedNoSlots")}</div>`}
         </div>
       </div>
     </div>
@@ -826,11 +833,11 @@ function opCard({ href, color, title, desc, meta, plus, dim, num, iconName, tag,
 
 function renderComingSoon(el, tool) {
   el.innerHTML = `
-    <div class="eyebrow">// PLANNED TOOL</div>
+    <div class="eyebrow">// ${t("bearCalc.plannedTool").toUpperCase()}</div>
     <h1 class="page-title" style="color:${tool.color}">${tool.title}</h1>
     <div class="panel gate">
       <p>${tool.desc}</p>
-      <p style="font-size:12px;">Not built yet — this is a placeholder route so the card has somewhere to link to. Build it out in <code>app.js</code> (add a renderer) and <code>data.js</code> (add its data) when you're ready.</p>
+      <p style="font-size:12px;">${t("bearCalc.notBuiltYet")}</p>
     </div>
   `;
 }
@@ -917,9 +924,9 @@ function renderSvS(el) {
   if (!Store.currentUser) {
     el.innerHTML = `
       <div class="panel" style="text-align:center;padding:32px 20px;">
-        <div class="eyebrow" style="color:var(--accent-purple);margin-bottom:10px;">SIGN IN REQUIRED</div>
-        <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 16px;">SvS prep is for alliance members only. Sign in with your chief name and PIN to continue.</p>
-        <button class="btn primary" id="svsGoSignIn">Sign in</button>
+        <div class="eyebrow" style="color:var(--accent-purple);margin-bottom:10px;">${t("common.signInRequired").toUpperCase()}</div>
+        <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 16px;">${t("svs.gateNotice")}</p>
+        <button class="btn primary" id="svsGoSignIn">${t("common.signIn")}</button>
       </div>
     `;
     el.querySelector("#svsGoSignIn").onclick = openSignIn;
@@ -935,10 +942,10 @@ function renderSvS(el) {
   if (svsTab === "signup") svsTab = "request";
   el.innerHTML = `
     <div class="tabs" style="--accent-active:var(--accent-purple)">
-      <button data-t="request" class="${svsTab === "request" ? "active" : ""}">MY BAG</button>
-      <button data-t="mysub" class="${svsTab === "mysub" ? "active" : ""}">MY SUBMISSION</button>
-      <button data-t="mypoints" class="${svsTab === "mypoints" ? "active" : ""}">MY POINTS</button>
-      ${scheduleAllowed ? `<button data-t="schedule" class="${svsTab === "schedule" ? "active" : ""}">SCHEDULE</button>` : ""}
+      <button data-t="request" class="${svsTab === "request" ? "active" : ""}">${t("svs.myBag").toUpperCase()}</button>
+      <button data-t="mysub" class="${svsTab === "mysub" ? "active" : ""}">${t("svs.mySubmission").toUpperCase()}</button>
+      <button data-t="mypoints" class="${svsTab === "mypoints" ? "active" : ""}">${t("svs.myPoints").toUpperCase()}</button>
+      ${scheduleAllowed ? `<button data-t="schedule" class="${svsTab === "schedule" ? "active" : ""}">${t("svs.schedule").toUpperCase()}</button>` : ""}
     </div>
     <div id="svsBody"></div>
   `;
@@ -1030,7 +1037,7 @@ window.addEventListener("pagehide", flushDraftAutosave);
 function svsGate(el, msg) {
   el.innerHTML = `
     <div class="panel">
-      <div class="eyebrow" style="color:var(--accent-purple);margin-bottom:10px;">SIGN IN TO SUBMIT</div>
+      <div class="eyebrow" style="color:var(--accent-purple);margin-bottom:10px;">${t("common.signInToSubmit").toUpperCase()}</div>
       <button class="btn primary" id="goSignIn">${msg}</button>
     </div>
   `;
@@ -1039,7 +1046,7 @@ function svsGate(el, msg) {
 
 function renderSvSWizard(el) {
   const user = svsWizardTargetUser();
-  if (!user) return svsGate(el, "Sign in to submit your bag");
+  if (!user) return svsGate(el, t("svs.gateSubmitBag"));
   if (!svsDraft) svsDraft = loadDraft(user);
 
   const steps = [
@@ -1537,7 +1544,7 @@ function renderWizardSubmit(el, wrap) {
 
 function renderSvSMySubmission(el) {
   const user = Store.currentUser;
-  if (!user) return svsGate(el, "Sign in to view your submission");
+  if (!user) return svsGate(el, t("svs.gateViewSubmission"));
   const sub = Store.bagSubmissions[user.id];
   if (!sub) {
     el.innerHTML = `
@@ -1573,7 +1580,7 @@ function renderSvSMySubmission(el) {
 
 function renderSvSMyPoints(el) {
   const user = Store.currentUser;
-  if (!user) return svsGate(el, "Sign in to view your points");
+  if (!user) return svsGate(el, t("svs.gateViewPoints"));
   const sub = Store.bagSubmissions[user.id];
   if (!sub) {
     el.innerHTML = `<div class="empty">No submission yet — projected points will show up here once you submit your bag.</div>`;
@@ -1682,7 +1689,7 @@ function renderSvsSignupPage(el) {
 
 function renderSvsSignupForm(el) {
   const user = Store.currentUser;
-  if (!user) return svsGate(el, "Sign in to complete your SVS Battle Sign Up");
+  if (!user) return svsGate(el, t("svsSignupPage.gateComplete"));
   if (!svsSignupDraft) svsSignupDraft = svsSignupBlankFromAccount(user);
   const existing = getSvsSignup(user.id);
   const open = Store.svsSignupsOpen;
@@ -2312,15 +2319,15 @@ function renderFeedback(el) {
   const items = Store.feedback.slice().sort((a, b) => b.votes - a.votes);
   const user = Store.currentUser;
   el.innerHTML = `
-    <div class="eyebrow">// IDEAS & BUGS</div>
+    <div class="eyebrow">// ${t("feedback.eyebrowIdeas").toUpperCase()}</div>
     <h1 class="page-title" style="color:var(--accent-orange)">feedback</h1>
     <div class="panel">
       ${
         user
           ? `
-        <textarea class="feedback-input" id="fbInput" placeholder="What's missing? Describe an idea or bug..."></textarea>
-        <button class="btn primary" id="fbSubmit" style="margin-top:8px;">Post</button>`
-          : `<div class="gate" style="padding:10px 0;"><button class="btn primary" id="fbSignIn">Sign in to post</button></div>`
+        <textarea class="feedback-input" id="fbInput" placeholder="${t("feedback.placeholder")}"></textarea>
+        <button class="btn primary" id="fbSubmit" style="margin-top:8px;">${t("feedback.post")}</button>`
+          : `<div class="gate" style="padding:10px 0;"><button class="btn primary" id="fbSignIn">${t("feedback.signInToPost")}</button></div>`
       }
     </div>
     <div>
@@ -2334,13 +2341,13 @@ function renderFeedback(el) {
             <button data-vote="${it.id}" data-dir="-1">▼</button>
           </div>
           <div class="feedback-body">
-            <div class="title">${escapeHtml(it.title || it.body.slice(0, 60))}<span class="status-badge ${it.status}">${it.status.toUpperCase()}</span></div>
+            <div class="title">${escapeHtml(it.title || it.body.slice(0, 60))}<span class="status-badge ${it.status}">${t("feedback.status." + it.status).toUpperCase()}</span></div>
             <div class="meta">${escapeHtml(it.body)}</div>
             <div class="meta" style="margin-top:4px;">— ${escapeHtml(it.author)} · ${new Date(it.createdAt).toLocaleDateString()}</div>
           </div>
         </div>`
         )
-        .join("") || `<div class="empty">No feedback yet. Be the first to post.</div>`}
+        .join("") || `<div class="empty">${t("feedback.noneYet")}</div>`}
     </div>
   `;
   el.querySelector("#fbSignIn")?.addEventListener("click", openSignIn);
@@ -2384,9 +2391,9 @@ function renderRookieOff(el) {
   if (!Store.currentUser) {
     el.innerHTML = `
       <div class="panel" style="text-align:center;padding:32px 20px;">
-        <div class="eyebrow" style="color:var(--accent-pink);margin-bottom:10px;">SIGN IN REQUIRED</div>
-        <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 16px;">The Rookie-Off leaderboard is for alliance members only. Sign in with your chief name and PIN to continue.</p>
-        <button class="btn primary" id="roGoSignIn">Sign in</button>
+        <div class="eyebrow" style="color:var(--accent-pink);margin-bottom:10px;">${t("common.signInRequired").toUpperCase()}</div>
+        <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 16px;">${t("rookieOff.gateNotice")}</p>
+        <button class="btn primary" id="roGoSignIn">${t("common.signIn")}</button>
       </div>
     `;
     el.querySelector("#roGoSignIn").onclick = openSignIn;
@@ -2403,28 +2410,27 @@ function renderRookieOff(el) {
   const T1_PROMOTION_PTS = (BAG_SECTIONS.find((s) => s.title.startsWith("D4"))?.fields || []).find((f) => f.key === "d4_t1")?.points || 0;
 
   el.innerHTML = `
-    <div class="eyebrow">// CONTEST</div>
+    <div class="eyebrow">// ${t("rookieOff.eyebrow").toUpperCase()}</div>
     <h1 class="page-title" style="color:var(--accent-pink)">rookie_off</h1>
     <p style="font-size:12.5px;color:var(--text-dim);margin:-6px 0 16px;">
-      T1 troops each member has queued for promotion during SvS — pulled straight from their MY BAG submission, no separate entry.
-      Each T1 troop is worth ${fmtNum(T1_PROMOTION_PTS)} pts when promoted to T11.
+      ${t("rookieOff.desc").replace("{pts}", fmtNum(T1_PROMOTION_PTS))}
     </p>
     <div class="stat-row" style="margin-bottom:16px;">
       <div class="stat-card">
-        <div class="label">TOTAL T1 TROOPS</div>
+        <div class="label">${t("rookieOff.totalT1").toUpperCase()}</div>
         <div class="value">${fmtNum(total)}</div>
-        <div class="sub">ACROSS ${rows.length} SUBMISSION${rows.length === 1 ? "" : "S"}</div>
+        <div class="sub">${t("rookieOff.acrossSubmissions").toUpperCase().replace("{n}", rows.length)}</div>
       </div>
       <div class="stat-card">
-        <div class="label">CONTEST POTENTIAL</div>
+        <div class="label">${t("rookieOff.contestPotential").toUpperCase()}</div>
         <div class="value">${fmtNum(total * T1_PROMOTION_PTS)}</div>
-        <div class="sub">PTS IF ALL PROMOTED TO T11</div>
+        <div class="sub">${t("rookieOff.ptsIfPromoted").toUpperCase()}</div>
       </div>
     </div>
     <div class="panel">
       <div style="overflow-x:auto;">
         <table>
-          <thead><tr><th>RANK</th><th>MEMBER</th><th>ALLIANCE</th><th>T1 TROOPS</th><th>PROMOTION PTS</th></tr></thead>
+          <thead><tr><th>${t("rookieOff.rank").toUpperCase()}</th><th>${t("rookieOff.member").toUpperCase()}</th><th>${t("admin.alliance").toUpperCase()}</th><th>${t("rookieOff.t1Troops").toUpperCase()}</th><th>${t("rookieOff.promotionPts").toUpperCase()}</th></tr></thead>
           <tbody>
             ${
               rows
@@ -2432,19 +2438,19 @@ function renderRookieOff(el) {
                   (r, i) => `
               <tr ${me && r.member.id === me.id ? `style="color:var(--accent-pink);"` : ""}>
                 <td>#${i + 1}</td>
-                <td>${escapeHtml(r.member.name)}${me && r.member.id === me.id ? " (you)" : ""}</td>
+                <td>${escapeHtml(r.member.name)}${me && r.member.id === me.id ? ` (${t("rookieOff.you")})` : ""}</td>
                 <td>${escapeHtml(r.member.alliance || "—")}</td>
                 <td>${fmtNum(r.t1)}</td>
                 <td>${fmtNum(r.t1 * T1_PROMOTION_PTS)}</td>
               </tr>`
                 )
-                .join("") || `<tr><td colspan="5">No bag submissions yet.</td></tr>`
+                .join("") || `<tr><td colspan="5">${t("rookieOff.noSubmissions")}</td></tr>`
             }
           </tbody>
         </table>
       </div>
     </div>
-    <p style="font-size:11px;color:var(--text-faint);margin-top:10px;">Want your count on this board? Set your T1 Troops (promotable) figure on <a href="#/svs" style="color:var(--accent-pink);">MY BAG</a> under D4 — Troop Training.</p>
+    <p style="font-size:11px;color:var(--text-faint);margin-top:10px;">${t("rookieOff.footerNotePrefix")} <a href="#/svs" style="color:var(--accent-pink);">${t("svs.myBag").toUpperCase()}</a> ${t("rookieOff.footerNoteSuffix")}</p>
   `;
 }
 
@@ -2563,14 +2569,14 @@ function renderAdmin(el) {
   const user = Store.currentUser;
   if (!isAdmin(user)) {
     el.innerHTML = `
-      <div class="eyebrow">// ADMIN</div>
+      <div class="eyebrow">// ${t("admin.eyebrow").toUpperCase()}</div>
       <h1 class="page-title" style="color:var(--accent-gold)">admin</h1>
       <div class="panel gate">
-        <p>This area is for state/alliance leadership.</p>
+        <p>${t("admin.leadershipOnly")}</p>
         ${
           user
-            ? `<p style="font-size:12px;">Signed in as ${user.name} (role: ${roleLabel(user.role)}) — not an admin/R4/leader.</p>`
-            : `<button class="btn primary" id="gateSignIn">Sign in</button>`
+            ? `<p style="font-size:12px;">${t("admin.signedInNotAdmin").replace("{name}", user.name).replace("{role}", roleLabel(user.role))}</p>`
+            : `<button class="btn primary" id="gateSignIn">${t("common.signIn")}</button>`
         }
       </div>
     `;
@@ -2591,12 +2597,12 @@ function renderAdmin(el) {
   const bagSubs = Store.bagSubmissions;
 
   el.innerHTML = `
-    <div class="eyebrow">// LEADERSHIP</div>
+    <div class="eyebrow">// ${t("admin.eyebrow").toUpperCase()}</div>
     <h1 class="page-title" style="color:var(--accent-gold)">admin</h1>
     ${
       officerScoped
         ? `<div class="panel" style="background:rgba(255,176,32,.1);border-color:var(--accent-amber);">
-            <span style="font-size:12px;color:var(--accent-amber);">✎ R4 view — Members and Bag submissions only. State config, alliance tags, SvS bulk actions, furnace brackets, and feedback moderation are admin-only.</span>
+            <span style="font-size:12px;color:var(--accent-amber);">✎ ${t("admin.officerNotice")}</span>
           </div>`
         : ""
     }
@@ -2606,39 +2612,35 @@ function renderAdmin(el) {
         ? ""
         : `
     <div class="panel">
-      <div class="planner-header"><strong>State config</strong></div>
+      <div class="planner-header"><strong>${t("admin.stateConfig")}</strong></div>
       <div class="field-row">
-        <div class="field"><label>OUR STATE #</label><input id="admStateNum" value="${st.stateNumber}" /></div>
-        <div class="field"><label>ENEMY STATE #</label><input id="admEnemy" value="${st.enemyState}" /></div>
-        <div class="field"><label>NEXT SVS DATE</label><input id="admDate" type="date" value="${st.svsDate}" /></div>
-        <div class="field"><label>MAX FURNACE LEVEL</label><input id="admFurnace" value="${st.maxFurnaceLevel || ""}" /></div>
+        <div class="field"><label>${t("admin.ourState").toUpperCase()}</label><input id="admStateNum" value="${st.stateNumber}" /></div>
+        <div class="field"><label>${t("admin.enemyState").toUpperCase()}</label><input id="admEnemy" value="${st.enemyState}" /></div>
+        <div class="field"><label>${t("admin.nextSvsDate").toUpperCase()}</label><input id="admDate" type="date" value="${st.svsDate}" /></div>
+        <div class="field"><label>${t("admin.maxFurnace").toUpperCase()}</label><input id="admFurnace" value="${st.maxFurnaceLevel || ""}" /></div>
         <div class="field">
-          <label>MAX TROOP BUILDING LEVEL</label>
+          <label>${t("admin.maxTroopBuilding").toUpperCase()}</label>
           <select id="admMaxBuilding">
             ${SVS_SIGNUP_BUILDING_LEVELS_ALL.map((lvl) => `<option value="${escapeHtml(lvl)}" ${st.maxTroopBuildingLevel === lvl ? "selected" : ""}>${escapeHtml(lvl)}</option>`).join("")}
           </select>
         </div>
       </div>
-      <p style="font-size:11px;color:var(--text-faint);margin:-8px 0 12px;">Separate from Max Furnace Level above — caps how high the three Training Camp Level dropdowns on SVS Alliance Signup go (e.g. furnace can be FC5 while troop-building is capped at FC4).</p>
-      <button class="btn primary small" id="admSaveState">Save</button>
+      <p style="font-size:11px;color:var(--text-faint);margin:-8px 0 12px;">${t("admin.maxTroopBuildingNote")}</p>
+      <button class="btn primary small" id="admSaveState">${t("common.save")}</button>
       <span id="admStateMsg" style="margin-left:10px;font-size:12px;color:var(--accent-green);"></span>
     </div>
 
     <div class="panel">
-      <div class="planner-header"><strong>Supabase sync</strong></div>
+      <div class="planner-header"><strong>${t("admin.supabaseSync")}</strong></div>
       <p style="font-size:11.5px;color:var(--text-dim);margin-top:-6px;">
-        ${
-          supabaseClient
-            ? "Every change here already saves to Supabase automatically the instant you make it — this button re-pushes everything currently loaded (members, schedule, bag submissions, feedback, alliances, state config) right now, in case anything didn't save the first time (e.g. you were offline briefly)."
-            : "Supabase isn't configured for this site yet (SUPABASE_CONFIG is blank in data.js), so this button has nothing to sync to — data is saved to this browser's localStorage only. See README.md → \"Going multi-user\" to set it up."
-        }
+        ${supabaseClient ? t("admin.supabaseSyncOn") : t("admin.supabaseSyncOff")}
       </p>
-      <button class="btn small ${supabaseClient ? "primary" : ""}" id="admForceSync" ${supabaseClient ? "" : "disabled"}>⏫ Force Sync to Supabase</button>
+      <button class="btn small ${supabaseClient ? "primary" : ""}" id="admForceSync" ${supabaseClient ? "" : "disabled"}>⏫ ${t("admin.forceSync")}</button>
       <span id="admSyncMsg" style="margin-left:10px;font-size:12px;"></span>
     </div>
 
     <div class="panel">
-      <div class="planner-header"><strong>Alliances (${alliances.length})</strong></div>
+      <div class="planner-header"><strong>${t("admin.alliancesHeading")} (${alliances.length})</strong></div>
       <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
         ${
           alliances
@@ -2651,44 +2653,44 @@ function renderAdmin(el) {
             <button data-adel="${i}" style="background:none;border:none;color:var(--accent-red);font-size:11px;">✕</button>
           </span>`
             )
-            .join("") || `<span class="empty" style="padding:4px 0;">No alliances yet.</span>`
+            .join("") || `<span class="empty" style="padding:4px 0;">${t("admin.noAlliancesYet")}</span>`
         }
       </div>
       <div style="display:flex;gap:8px;">
-        <input id="admNewAlliance" placeholder="New alliance tag (e.g. SYP)..." style="flex:1;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
-        <button class="btn small primary" id="admAddAlliance">Add alliance</button>
+        <input id="admNewAlliance" placeholder="${t("admin.newAlliancePlaceholder")}" style="flex:1;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
+        <button class="btn small primary" id="admAddAlliance">${t("admin.addAlliance")}</button>
       </div>
     </div>
     `
     }
 
     <div class="panel">
-      <div class="planner-header"><strong>Members (${members.length}${officerScoped ? ` / ${allMembers.length}` : ""})</strong></div>
-      <p style="font-size:11.5px;color:var(--text-dim);margin-top:-6px;">New members create their own PIN via "New Member" on the sign-in screen. Reset PIN lets you set a member's PIN directly (e.g. if they're locked out) — they'll need that exact PIN on their next sign-in.</p>
+      <div class="planner-header"><strong>${t("admin.members")} (${members.length}${officerScoped ? ` / ${allMembers.length}` : ""})</strong></div>
+      <p style="font-size:11.5px;color:var(--text-dim);margin-top:-6px;">${t("admin.membersNote")}</p>
       ${
         officerScoped
-          ? `<p style="font-size:11.5px;color:var(--accent-amber);margin-top:-4px;">Showing ${escapeHtml(user.alliance || "your alliance")} only — R4s see their own alliance's roster, not the whole state.</p>`
+          ? `<p style="font-size:11.5px;color:var(--accent-amber);margin-top:-4px;">${t("admin.officerRosterNote").replace("{alliance}", escapeHtml(user.alliance || t("admin.yourAlliance")))}</p>`
           : ""
       }
       <div class="field-row" style="margin-bottom:10px;">
         <div class="field">
-          <label>PREFERRED LANGUAGE</label>
+          <label>${t("admin.preferredLanguageFilter").toUpperCase()}</label>
           <select id="admMemberLangFilter">
-            <option value="" ${!adminMemberLangFilter ? "selected" : ""}>All Languages</option>
+            <option value="" ${!adminMemberLangFilter ? "selected" : ""}>${t("admin.allLanguages")}</option>
             ${SUPPORTED_LANGUAGES.map((l) => `<option value="${l.code}" ${adminMemberLangFilter === l.code ? "selected" : ""}>${escapeHtml(l.englishName)}</option>`).join("")}
           </select>
         </div>
       </div>
       <div style="overflow-x:auto;">
         <table>
-          <thead><tr><th>USER NAME</th><th>GAMER ID</th><th>ALLIANCE</th><th>LANGUAGE</th><th>RESET PIN</th><th>RANK</th><th></th></tr></thead>
+          <thead><tr><th>${t("admin.userName").toUpperCase()}</th><th>${t("admin.gamerId").toUpperCase()}</th><th>${t("admin.alliance").toUpperCase()}</th><th>${t("admin.languageColumn").toUpperCase()}</th><th>${t("admin.resetPin").toUpperCase()}</th><th>${t("admin.rank").toUpperCase()}</th><th></th></tr></thead>
           <tbody>
             ${members
               .filter((m) => !adminMemberLangFilter || (m.preferredLanguage || DEFAULT_LANGUAGE_CODE) === adminMemberLangFilter)
               .map(
                 (m) => `
               <tr>
-                <td><input data-mfield="name" data-mid="${m.id}" value="${escapeHtml(m.name)}" ${m.permanent ? `disabled title="Permanent admin login — name can't be changed"` : ""} style="width:100%;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;${m.permanent ? "opacity:.6;" : ""}" /></td>
+                <td><input data-mfield="name" data-mid="${m.id}" value="${escapeHtml(m.name)}" ${m.permanent ? `disabled title="${t("admin.permanentNameLocked")}"` : ""} style="width:100%;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;${m.permanent ? "opacity:.6;" : ""}" /></td>
                 <td><input data-mfield="gamerId" data-mid="${m.id}" value="${escapeHtml(m.gamerId || "")}" placeholder="—" style="width:100%;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;" /></td>
                 <td>
                   <select data-mfield="alliance" data-mid="${m.id}" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;">
@@ -2700,7 +2702,7 @@ function renderAdmin(el) {
                 <td>
                   ${
                     officerScoped
-                      ? `<span style="font-size:12px;color:var(--text-dim);" title="Only Admin can change a player's preferred language">${escapeHtml(languageEnglishName(m.preferredLanguage))}</span>`
+                      ? `<span style="font-size:12px;color:var(--text-dim);" title="${t("admin.onlyAdminLanguage")}">${escapeHtml(languageEnglishName(m.preferredLanguage))}</span>`
                       : `<select data-mfield="preferredLanguage" data-mid="${m.id}" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;">
                           ${SUPPORTED_LANGUAGES.map((l) => `<option value="${l.code}" ${(m.preferredLanguage || DEFAULT_LANGUAGE_CODE) === l.code ? "selected" : ""}>${escapeHtml(l.englishName)}</option>`).join("")}
                         </select>`
@@ -2709,18 +2711,18 @@ function renderAdmin(el) {
                 <td>
                   ${
                     m.permanent
-                      ? `<span style="font-size:10.5px;color:var(--text-faint);" title="Standing admin login — always PIN ${escapeHtml(PERMANENT_ADMIN_MEMBER.pin)}">permanent login</span>`
+                      ? `<span style="font-size:10.5px;color:var(--text-faint);" title="${t("admin.permanentLoginTitle")} ${escapeHtml(PERMANENT_ADMIN_MEMBER.pin)}">${t("admin.permanentLogin")}</span>`
                       : m.pin
-                      ? `<button data-mresetpin="${m.id}" class="btn small" style="font-size:10.5px;color:var(--accent-amber);">Reset PIN</button>`
-                      : `<span style="font-size:10.5px;color:var(--text-faint);">no PIN yet</span>`
+                      ? `<button data-mresetpin="${m.id}" class="btn small" style="font-size:10.5px;color:var(--accent-amber);">${t("admin.resetPin")}</button>`
+                      : `<span style="font-size:10.5px;color:var(--text-faint);">${t("admin.noPinYet")}</span>`
                   }
                 </td>
                 <td>
                   ${
                     m.permanent
-                      ? `<span style="font-size:12px;color:var(--text-dim);" title="This is the permanent admin login — its rank can't be changed">${escapeHtml(roleLabel(m.role))}</span>`
+                      ? `<span style="font-size:12px;color:var(--text-dim);" title="${t("admin.permanentRankLocked")}">${escapeHtml(roleLabel(m.role))}</span>`
                       : officerScoped
-                      ? `<span style="font-size:12px;color:var(--text-dim);" title="Only the admin role can change rank">${escapeHtml(roleLabel(m.role))}</span>`
+                      ? `<span style="font-size:12px;color:var(--text-dim);" title="${t("admin.onlyAdminRank")}">${escapeHtml(roleLabel(m.role))}</span>`
                       : `<select data-mfield="role" data-mid="${m.id}" style="background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:3px;padding:5px 8px;font-size:12px;">
                           ${["member", "officer", "admin"].map((r) => `<option value="${r}" ${m.role === r ? "selected" : ""}>${roleLabel(r)}</option>`).join("")}
                         </select>`
@@ -2728,21 +2730,21 @@ function renderAdmin(el) {
                 </td>
                 <td>
                   <div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:nowrap;">
-                    ${canEditMemberBag(user) ? `<button data-medit2="${m.id}" class="btn small" style="white-space:nowrap;">Edit Bag</button>` : ""}
+                    ${canEditMemberBag(user) ? `<button data-medit2="${m.id}" class="btn small" style="white-space:nowrap;">${t("admin.editBag")}</button>` : ""}
                     ${!officerScoped && !m.permanent ? `<button data-mdel="${m.id}" class="btn small" style="color:var(--accent-red);">✕</button>` : ""}
                   </div>
                 </td>
               </tr>`
               )
-              .join("") || `<tr><td colspan="7">No members yet.</td></tr>`}
+              .join("") || `<tr><td colspan="7">${t("admin.noMembersYet")}</td></tr>`}
           </tbody>
         </table>
       </div>
       <div style="display:flex;gap:8px;margin-top:10px;">
-        <input id="admNewMember" placeholder="New member name..." style="flex:1;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
-        <input id="admNewGamerId" placeholder="Gamer ID (optional)..." style="width:150px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
-        <input id="admNewPin" placeholder="4-digit PIN..." inputmode="numeric" maxlength="4" style="width:110px;letter-spacing:.2em;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
-        <button class="btn small primary" id="admAddMember">Add member</button>
+        <input id="admNewMember" placeholder="${t("admin.newMemberName")}" style="flex:1;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
+        <input id="admNewGamerId" placeholder="${t("admin.gamerIdOptional")}" style="width:150px;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
+        <input id="admNewPin" placeholder="${t("admin.newPinPlaceholder")}" inputmode="numeric" maxlength="4" style="width:110px;letter-spacing:.2em;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:8px 10px;font-size:12px;" />
+        <button class="btn small primary" id="admAddMember">${t("admin.addMember")}</button>
       </div>
     </div>
 
@@ -2751,12 +2753,12 @@ function renderAdmin(el) {
         ? ""
         : `
     <div class="panel">
-      <div class="planner-header"><strong>SvS prep — bulk actions</strong></div>
-      <p style="font-size:12px;color:var(--text-dim);">${countFilledSlots()} slots currently booked across all days.</p>
-      <button class="btn small" id="admClearSlots" style="color:var(--accent-red);">Clear all booked slots</button>
+      <div class="planner-header"><strong>${t("admin.bulkActions")}</strong></div>
+      <p style="font-size:12px;color:var(--text-dim);">${t("admin.slotsBooked").replace("{n}", countFilledSlots())}</p>
+      <button class="btn small" id="admClearSlots" style="color:var(--accent-red);">${t("admin.clearAllSlots")}</button>
       <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);">
-        <p style="font-size:12px;color:var(--text-dim);margin:0 0 8px;">Reset the planner for a new SvS cycle — clears every member's bag entries, drafts, submissions, points, and selected time slots, plus the booked SCHEDULE grid those slots feed. Member accounts, PINs, and roles are untouched.</p>
-        <button class="btn small primary" id="admClearBags" style="background:var(--accent-red);border-color:var(--accent-red);">🗑 Clear Bags (reset for new cycle)</button>
+        <p style="font-size:12px;color:var(--text-dim);margin:0 0 8px;">${t("admin.clearBagsNote")}</p>
+        <button class="btn small primary" id="admClearBags" style="background:var(--accent-red);border-color:var(--accent-red);">🗑 ${t("admin.clearBags")}</button>
       </div>
     </div>
 
@@ -3334,9 +3336,9 @@ function renderChampionship(el) {
   if (!user) {
     el.innerHTML = `
       <div class="panel" style="text-align:center;padding:32px 20px;">
-        <div class="eyebrow" style="color:var(--accent-green);margin-bottom:10px;">SIGN IN REQUIRED</div>
-        <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 16px;">The Alliance Championship planner is for alliance leadership. Sign in to continue.</p>
-        <button class="btn primary" id="chGoSignIn">Sign in</button>
+        <div class="eyebrow" style="color:var(--accent-green);margin-bottom:10px;">${t("common.signInRequired").toUpperCase()}</div>
+        <p style="font-size:12.5px;color:var(--text-dim);margin:0 0 16px;">${t("championship.gateNotice")}</p>
+        <button class="btn primary" id="chGoSignIn">${t("common.signIn")}</button>
       </div>
     `;
     el.querySelector("#chGoSignIn").onclick = openSignIn;
@@ -3344,7 +3346,7 @@ function renderChampionship(el) {
   }
   if (!canAccessChampionship(user)) {
     el.innerHTML = `
-      <div class="eyebrow">// ALLIANCE CHAMPIONSHIP</div>
+      <div class="eyebrow">// ${t("championship.eyebrow").toUpperCase()}</div>
       <h1 class="page-title" style="color:var(--accent-green)">championship</h1>
       <div class="panel gate">
         <p>This tool is for alliance leadership — Admin or R4.</p>
@@ -3355,7 +3357,7 @@ function renderChampionship(el) {
   }
   if (user.role === "officer" && !user.alliance) {
     el.innerHTML = `
-      <div class="eyebrow">// ALLIANCE CHAMPIONSHIP</div>
+      <div class="eyebrow">// ${t("championship.eyebrow").toUpperCase()}</div>
       <h1 class="page-title" style="color:var(--accent-green)">championship</h1>
       <div class="panel gate">
         <p>Your account isn't assigned to an alliance yet.</p>
@@ -3369,7 +3371,7 @@ function renderChampionship(el) {
   const allianceTag = championshipAccessibleAlliance(user);
   if (!allianceTag) {
     el.innerHTML = `
-      <div class="eyebrow">// ALLIANCE CHAMPIONSHIP</div>
+      <div class="eyebrow">// ${t("championship.eyebrow").toUpperCase()}</div>
       <h1 class="page-title" style="color:var(--accent-green)">championship</h1>
       <div class="panel gate">
         <p>No alliance tags exist yet.</p>
@@ -3391,7 +3393,7 @@ function renderChampionship(el) {
   const showLanes = sortedPlayers.length > 0;
 
   el.innerHTML = `
-    <div class="eyebrow">// ALLIANCE CHAMPIONSHIP</div>
+    <div class="eyebrow">// ${t("championship.eyebrow").toUpperCase()}</div>
     <h1 class="page-title" style="color:var(--accent-green)">championship</h1>
     <p style="font-size:12.5px;color:var(--text-dim);margin:-6px 0 16px;">
       Import the Championship player list from screenshots or a dataset, review it, then auto-balance two maxed 20-player lanes as evenly as possible — everyone else overflows into the third lane. Separate from bag planning; nothing here touches member accounts, PINs, or bag data.
